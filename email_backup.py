@@ -24,11 +24,12 @@ from typing import Any, TextIO
 
 
 DEFAULT_IGNORE_MAILBOX_REGEX = r"(^|[/.])(Trash|Junk|Spam|Drafts)([/.]|$)"
-DEFAULT_MBSYNC_COMMAND = ["mbsync", "-a"]
+DEFAULT_MBSYNC_COMMAND = ["mbsync", "-c", "./mbsyncrc", "mail-backup"]
 DEFAULT_RESTIC_COMMAND = ["restic"]
 DEFAULT_RESTIC_BACKUP_ARGS = ["--tag", "mail-backup"]
 DEFAULT_RESTIC_CHECK_ARGS = ["--read-data-subset=5%"]
-DEFAULT_STATE_DIR = "~/.email-backup"
+DEFAULT_MAILDIR_PATH = "./data/maildir"
+DEFAULT_STATE_DIR = "./data/state"
 DEFAULT_REPORT_SAMPLE_LIMIT = 20
 DEFAULT_IMMUTABILITY_DAYS = 30
 DEFAULT_RESTIC_CHECK_INTERVAL_DAYS = 7
@@ -196,7 +197,7 @@ class Config:
             raise ConfigError(f"Unknown configuration keys: {', '.join(unknown_keys)}")
 
         base_dir = resolved_config_path.parent
-        maildir_path = resolve_path(base_dir, require_string(raw, "maildir_path"))
+        maildir_path = resolve_path(base_dir, optional_string(raw, "maildir_path", DEFAULT_MAILDIR_PATH))
         state_dir = resolve_path(base_dir, optional_string(raw, "state_dir", DEFAULT_STATE_DIR))
         restic_repo = resolve_repo_spec(base_dir, require_string(raw, "restic_repo"))
         ignore_mailbox_regex = optional_string(raw, "ignore_mailbox_regex", DEFAULT_IGNORE_MAILBOX_REGEX)
@@ -232,8 +233,10 @@ class Config:
         return config
 
     def validate(self) -> None:
-        if not self.maildir_path.is_dir():
-            raise ConfigError(f"maildir_path does not exist: {self.maildir_path}")
+        if self.maildir_path.exists() and not self.maildir_path.is_dir():
+            raise ConfigError(f"maildir_path is not a directory: {self.maildir_path}")
+        if self.state_dir.exists() and not self.state_dir.is_dir():
+            raise ConfigError(f"state_dir is not a directory: {self.state_dir}")
         if not self.mbsync_command:
             raise ConfigError("mbsync_command must not be empty")
         if not self.restic_command:
@@ -361,6 +364,7 @@ class Runtime:
                 errors="replace",
                 bufsize=1,
                 env=self.command_env(extra_env),
+                cwd=str(self.config.config_path.parent),
             )
         except FileNotFoundError as exc:
             raise BackupError(f"Required command not found: {command[0]}") from exc
@@ -549,6 +553,9 @@ def build_manifest(
     ignore_mailbox_regex: str,
     observed_at_epoch: int | None = None,
 ) -> dict[str, Any]:
+    if not maildir_root.is_dir():
+        raise BackupError(f"maildir_path does not exist or is not a directory: {maildir_root}")
+
     if observed_at_epoch is None:
         observed_at_epoch = int(time.time())
 
@@ -591,7 +598,7 @@ def build_manifest(
                 message_id=message_id,
                 subject=subject,
                 message_ts=message_ts,
-                first_seen_ts=observed_at_epoch,
+                first_seen_ts=min(message_ts, observed_at_epoch),
                 content_hash=message_hash,
                 mailbox=mailbox,
                 rel_path=rel_path,
@@ -817,19 +824,6 @@ def sample_placement_change_item(
     }
 
 
-def sample_collision_item(record: dict[str, Any], source_name: str) -> dict[str, Any]:
-    return {
-        "source": source_name,
-        "key": record["key"],
-        "message_id": record.get("message_id"),
-        "subject": record.get("subject"),
-        "message_date": format_epoch(record.get("message_ts")),
-        "mailboxes": record.get("mailboxes", []),
-        "sample_paths": record.get("sample_paths", []),
-        "content_hashes": record.get("content_hashes", []),
-    }
-
-
 def compare_manifests(
     baseline_manifest: dict[str, Any],
     current_manifest: dict[str, Any],
@@ -843,7 +837,6 @@ def compare_manifests(
     missing = []
     mutated = []
     placement_changes = []
-    collisions = []
 
     for key, baseline_record in baseline_records.items():
         if not stable_record(baseline_record, cutoff_epoch):
@@ -864,16 +857,8 @@ def compare_manifests(
         ):
             placement_changes.append(sample_placement_change_item(baseline_record, current_record))
 
-    for source_name, records in (("baseline", baseline_records), ("current", current_records)):
-        for key in sorted(records):
-            record = records[key]
-            if len(record.get("content_hashes", [])) > 1:
-                collisions.append(sample_collision_item(record, source_name))
-
     if missing or mutated or placement_changes:
         status = "alert"
-    elif collisions:
-        status = "warning"
     else:
         status = "ok"
 
@@ -887,19 +872,16 @@ def compare_manifests(
             "missing_stable_count": len(missing),
             "mutated_stable_count": len(mutated),
             "placement_changed_stable_count": len(placement_changes),
-            "collision_count": len(collisions),
         },
         "samples": {
             "missing_stable_messages": missing[:sample_limit],
             "mutated_stable_messages": mutated[:sample_limit],
             "placement_changed_stable_messages": placement_changes[:sample_limit],
-            "message_id_collisions": collisions[:sample_limit],
         },
         "details": {
             "missing_stable_messages": missing,
             "mutated_stable_messages": mutated,
             "placement_changed_stable_messages": placement_changes,
-            "message_id_collisions": collisions,
         },
     }
 
@@ -915,19 +897,16 @@ def baseline_init_report(immutability_days: int) -> dict[str, Any]:
             "missing_stable_count": 0,
             "mutated_stable_count": 0,
             "placement_changed_stable_count": 0,
-            "collision_count": 0,
         },
         "samples": {
             "missing_stable_messages": [],
             "mutated_stable_messages": [],
             "placement_changed_stable_messages": [],
-            "message_id_collisions": [],
         },
         "details": {
             "missing_stable_messages": [],
             "mutated_stable_messages": [],
             "placement_changed_stable_messages": [],
-            "message_id_collisions": [],
         },
     }
 
@@ -977,7 +956,6 @@ def render_report_text(report: dict[str, Any], sample_limit: int) -> str:
         f"Stable messages missing: {summary['missing_stable_count']}",
         f"Stable messages mutated: {summary['mutated_stable_count']}",
         f"Stable messages with mailbox/count changes: {summary['placement_changed_stable_count']}",
-        f"Message-ID collisions: {summary['collision_count']}",
         f"Immutability window (days): {summary['immutability_days']}",
         f"Baseline unique messages: {summary['baseline_unique_messages']}",
         f"Current unique messages: {summary['current_unique_messages']}",
@@ -1004,36 +982,31 @@ def render_report_text(report: dict[str, Any], sample_limit: int) -> str:
             )
         )
 
-    if samples["message_id_collisions"]:
-        lines.append("")
-        lines.extend(render_samples("Collision samples:", samples["message_id_collisions"]))
-
+    truncated = False
     if len(report["details"]["missing_stable_messages"]) > sample_limit:
-        lines.append("")
         lines.append(
-            f"... {len(report['details']['missing_stable_messages']) - sample_limit} more missing messages not shown"
+            f"  ... {len(report['details']['missing_stable_messages']) - sample_limit} more missing messages not shown"
         )
+        truncated = True
 
     if len(report["details"]["mutated_stable_messages"]) > sample_limit:
-        lines.append("")
         lines.append(
-            f"... {len(report['details']['mutated_stable_messages']) - sample_limit} more mutated messages not shown"
+            f"  ... {len(report['details']['mutated_stable_messages']) - sample_limit} more mutated messages not shown"
         )
+        truncated = True
 
     if len(report["details"]["placement_changed_stable_messages"]) > sample_limit:
-        lines.append("")
         lines.append(
             (
-                f"... {len(report['details']['placement_changed_stable_messages']) - sample_limit} "
+                f"  ... {len(report['details']['placement_changed_stable_messages']) - sample_limit} "
                 "more mailbox/count changes not shown"
             )
         )
+        truncated = True
 
-    if len(report["details"]["message_id_collisions"]) > sample_limit:
+    if truncated:
         lines.append("")
-        lines.append(
-            f"... {len(report['details']['message_id_collisions']) - sample_limit} more collisions not shown"
-        )
+        lines.append("Full details in the JSON report (see 'details' key).")
 
     return "\n".join(lines) + "\n"
 
@@ -1106,8 +1079,9 @@ class EmailBackupApp:
             report = baseline_init_report(self.config.immutability_days)
             report["summary"]["current_unique_messages"] = current_manifest["stats"]["unique_messages"]
 
+        report_text = render_report_text(report, self.config.report_sample_limit)
         write_json(report_json_path, report)
-        write_text(report_text_path, render_report_text(report, self.config.report_sample_limit))
+        write_text(report_text_path, report_text)
 
         self.run_restic_backup([current_manifest_path, report_json_path, report_text_path])
         self.maybe_run_restic_check()
@@ -1115,21 +1089,19 @@ class EmailBackupApp:
         status = str(report["summary"]["status"])
         if status == "alert":
             self.handle_integrity_alert(report, report_text_path, current_manifest_path)
+            self.runtime.log_raw("\n" + report_text + "\n")
             return ALERT_EXIT_CODE
 
-        if status == "warning":
-            self.runtime.log(
-                "WARN",
-                f"Audit completed with Message-ID collision warnings: {report['summary']['collision_count']}",
-            )
-        elif status == "baseline-init":
+        if status == "baseline-init":
             self.runtime.log("INFO", "Initializing baseline after first successful backup")
         else:
             self.runtime.log("INFO", "Audit completed without stable-message anomalies")
 
         self.promote_baseline(current_manifest_path, preserve_history=True)
+        self.runtime.log("INFO", f"Baseline updated: {self.baseline_manifest}")
         self.runtime.log("INFO", f"Audit report: {report_json_path}")
         self.runtime.log("INFO", f"Audit summary: {report_text_path}")
+        self.runtime.log_raw("\n" + report_text + "\n")
         return 0
 
     def rebaseline(self) -> int:

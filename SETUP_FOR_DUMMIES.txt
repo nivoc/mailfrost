@@ -1,0 +1,77 @@
+SETUP FOR DUMMIES
+
+This is the maximal simple setup.
+Everything stays inside this folder.
+
+What this setup does:
+- downloads your Fastmail mail into ./data/maildir
+- stores backup state in ./data/state
+- stores a local restic backup in ./data/restic-repo
+- stores the restic password in ./data/restic/password
+
+What you need installed:
+- mbsync
+- restic
+- python3
+
+FIRST TIME SETUP
+
+1. Check mbsyncrc
+
+Open the file "mbsyncrc" and make sure these lines are correct:
+
+User your-fastmail-address
+Pass your-fastmail-app-password
+Host imap.fastmail.com
+
+2. Run the small setup script
+
+In this folder run:
+
+./setup_local_backup.sh
+
+This will:
+- create the local folders
+- create a random restic password
+- create the local restic repo
+
+3. Test mail sync
+
+Run:
+
+mbsync -c ./mbsyncrc mail-backup
+
+If that works, your mail should appear in:
+
+./data/maildir
+
+4. Run the backup tool
+
+Run:
+
+./email_backup.py
+
+That will:
+- sync mail again
+- check for weird deletions or changes
+- write a restic backup
+
+USE IT AGAIN LATER
+
+After setup, normal usage is just:
+
+./email_backup.py
+
+FILES YOU CARE ABOUT
+
+- mbsyncrc
+- email-backup.toml
+- ./data/maildir
+- ./data/state
+- ./data/restic-repo
+
+IMPORTANT
+
+This is only a local backup on the same machine.
+Good for a first step.
+Not good enough against disk failure, theft, or total machine loss.

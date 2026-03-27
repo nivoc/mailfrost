@@ -5,7 +5,11 @@ from pathlib import Path
 
 from email_backup import (
     BackupError,
+    Config,
     DEFAULT_IGNORE_MAILBOX_REGEX,
+    DEFAULT_MAILDIR_PATH,
+    DEFAULT_STATE_DIR,
+    build_manifest,
     compare_manifests,
     load_manifest,
     write_checksum,
@@ -38,6 +42,31 @@ def manifest_record(
 
 
 class EmailBackupTests(unittest.TestCase):
+    def test_config_defaults_use_tool_local_subdirs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "email-backup.toml"
+            config_path.write_text(
+                '\n'.join(
+                    [
+                        'restic_repo = "/tmp/restic-repo"',
+                        'mbsync_command = ["/bin/echo", "mbsync"]',
+                        'restic_command = ["/bin/echo", "restic"]',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = Config.load(config_path)
+
+            self.assertEqual(config.maildir_path, (config_path.parent / DEFAULT_MAILDIR_PATH).resolve())
+            self.assertEqual(config.state_dir, (config_path.parent / DEFAULT_STATE_DIR).resolve())
+
+    def test_build_manifest_rejects_missing_maildir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(BackupError):
+                build_manifest(Path(temp_dir) / "missing-maildir", DEFAULT_IGNORE_MAILBOX_REGEX)
+
     def test_default_ignore_regex_matches_dot_maildir_folders(self) -> None:
         pattern = re.compile(DEFAULT_IGNORE_MAILBOX_REGEX)
 

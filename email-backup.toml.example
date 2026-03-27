@@ -1,14 +1,15 @@
 # Copy this file to email-backup.toml and adjust the values.
 
-maildir_path = "~/Maildir"
+# By default the tool keeps its Maildir inside this repository.
+maildir_path = "./data/maildir"
 
 # Examples:
 # restic_repo = "/Volumes/backup/restic-mail"
 # restic_repo = "b2:my-bucket:mail-history"
 restic_repo = "b2:your-bucket-name:backup-folder"
 
-# Store manifests, reports, locks, and logs outside the Maildir.
-state_dir = "~/.email-backup"
+# Store manifests, reports, locks, and logs in a sibling subdirectory.
+state_dir = "./data/state"
 
 # How many days old a message must be before disappearance or mutation is treated as suspicious.
 immutability_days = 30
@@ -25,8 +26,8 @@ restic_check_interval_days = 7
 # Set to false if you do not want to back up the state directory on every run.
 restic_include_state_dir = true
 
-# Commands are arrays so you can include fixed arguments.
-mbsync_command = ["mbsync", "-a"]
+# By default the tool uses a dedicated local mbsync config and one channel.
+mbsync_command = ["mbsync", "-c", "./mbsyncrc", "mail-backup"]
 restic_command = ["restic"]
 
 # Extra arguments for "restic backup" and "restic check".
@@ -49,7 +50,7 @@ alert_command = ""
 
 [env]
 # Prefer a password file or password command over inline secrets.
-RESTIC_PASSWORD_FILE = "~/.config/restic/mail-backup-password"
+RESTIC_PASSWORD_FILE = "./data/restic/password"
 
 # Optional cloud credentials:
 # B2_ACCOUNT_ID = "..."

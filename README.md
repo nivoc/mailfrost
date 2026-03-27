@@ -15,7 +15,7 @@ The core idea is simple: once a message has been present long enough to be consi
 - Python 3.11 or newer
 - `mbsync`
 - `restic`
-- a working Maildir sync setup
+- a working `mbsync` setup for one remote IMAP account
 - a `restic` repository that you can already write to
 
 For stronger guarantees, use an off-host `restic` repository and storage-side immutability or retention controls where possible.
@@ -26,23 +26,35 @@ For stronger guarantees, use an off-host `restic` repository and storage-side im
 
    ```bash
    cp email-backup.toml.example email-backup.toml
+   cp mbsyncrc.example mbsyncrc
    ```
 
-2. Edit `email-backup.toml`:
+2. Edit `mbsyncrc`:
 
-   - set `maildir_path`
+   - set the IMAP host and username
+   - replace `PassCmd` with your preferred secret lookup
+   - keep the local Maildir at `./data/maildir` unless you want a different tool-local path
+
+3. Edit `email-backup.toml`:
+
    - set `restic_repo`
    - set `env.RESTIC_PASSWORD_FILE` or other required `restic` credentials
    - adjust `immutability_days`
    - optionally add an `alert_command`
 
-3. Make sure your `restic` repo exists. If not, initialize it once:
+By default the repository keeps everything self-contained:
+
+- `./mbsyncrc`: dedicated `mbsync` config for this tool
+- `./data/maildir`: synced Maildir
+- `./data/state`: manifests, reports, logs, and locks
+
+4. Make sure your `restic` repo exists. If not, initialize it once:
 
    ```bash
-   RESTIC_PASSWORD_FILE=~/.config/restic/mail-backup-password restic -r /path/to/repo init
+   RESTIC_PASSWORD_FILE=./data/restic/password restic -r /path/to/repo init
    ```
 
-4. Run the first backup:
+5. Run the first backup:
 
    ```bash
    ./email_backup.py
@@ -129,7 +141,7 @@ alert_command = 'curl -fsS -X POST "https://api.telegram.org/bot<token>/sendMess
 Run every hour:
 
 ```cron
-0 * * * * cd /Users/you/path/to/mail-bck && /usr/bin/env python3 ./email_backup.py >> /tmp/email-backup-cron.log 2>&1
+0 * * * * /usr/bin/env python3 /Users/you/path/to/mail-bck/email_backup.py >> /tmp/email-backup-cron.log 2>&1
 ```
 
 ### launchd on macOS
@@ -140,7 +152,7 @@ If you prefer `launchd`, create a plist that runs:
 /usr/bin/env python3 /Users/you/path/to/mail-bck/email_backup.py
 ```
 
-Point it at the same working directory so the default config file is found.
+The script resolves the default config path itself and runs external commands from the config directory, so you do not need a separate `cd`.
 
 ## Operational Notes
 
@@ -150,10 +162,11 @@ Point it at the same working directory so the default config file is found.
 - If the scan cannot read some Maildir files, the run fails closed instead of silently producing a partial audit.
 - Message-ID collisions with different bodies are reported as warnings because they indicate ambiguous identity, but not always corruption.
 - The baseline and latest manifests get local SHA-256 sidecars so accidental edits or corruption are detected before they are trusted again.
+- Local paths in `mbsync_command`, `restic_command`, and related config are interpreted relative to the config file directory.
 
 ## Recommended First Run Checklist
 
-1. Confirm `mbsync -a` already behaves the way you want.
+1. Confirm `mbsync -c ./mbsyncrc mail-backup` already behaves the way you want.
 2. Confirm the `restic` repo is initialized and reachable.
 3. Run `./email_backup.py`.
 4. Inspect the run log and the generated report in `state_dir/reports/`.
