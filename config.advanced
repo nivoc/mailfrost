@@ -1,0 +1,12 @@
+MAILDIR_PATH=./data/maildir
+STATE_DIR=./data/state
+REPORT_SAMPLE_LIMIT=20
+IMMUTABILITY_DAYS=30
+IGNORE_MAILBOX_REGEX='(^|[/.])(Trash|Junk|Spam|Drafts)([/.]|$)'
+KOPIA_MAINTENANCE_INTERVAL_DAYS=7
+KOPIA_INCLUDE_STATE_DIR=true
+MBSYNC_CONFIG_PATH=./data/state/mbsyncrc.generated
+MBSYNC_COMMAND='mbsync -c ./data/state/mbsyncrc.generated mail-backup'
+KOPIA_COMMAND=kopia
+KOPIA_SNAPSHOT_ARGS='--tags purpose:mail-backup'
+ALERT_COMMAND=

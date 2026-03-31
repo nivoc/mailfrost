@@ -1,77 +1,69 @@
 SETUP FOR DUMMIES
 
-This is the maximal simple setup.
-Everything stays inside this folder.
+This is the shortest path to a working local setup.
+Everything can stay inside this folder.
 
 What this setup does:
-- downloads your Fastmail mail into ./data/maildir
-- stores backup state in ./data/state
-- stores a local restic backup in ./data/restic-repo
-- stores the restic password in ./data/restic/password
+- downloads your IMAP mail into `./data/maildir`
+- stores audit state in `./data/state`
+- stores Kopia settings in `./data/kopia`
+- generates the `mbsync` config automatically
 
 What you need installed:
-- mbsync
-- restic
-- python3
+- `go`
+- `mbsync`
+- `kopia`
 
 FIRST TIME SETUP
 
-1. Check mbsyncrc
+1. Run:
 
-Open the file "mbsyncrc" and make sure these lines are correct:
+go run ./cmd/mail-backup setup
 
-User your-fastmail-address
-Pass your-fastmail-app-password
-Host imap.fastmail.com
+2. Answer the questions:
 
-2. Run the small setup script
+- IMAP host
+- IMAP username
+- IMAP password
+- Kopia repository type
+- local repo path or S3 settings
 
-In this folder run:
+3. Test mail sync:
 
-./setup_local_backup.sh
+mbsync -c ./data/state/mbsyncrc.generated mail-backup
 
-This will:
-- create the local folders
-- create a random restic password
-- create the local restic repo
-
-3. Test mail sync
-
-Run:
-
-mbsync -c ./mbsyncrc mail-backup
-
-If that works, your mail should appear in:
+If that works, mail should appear in:
 
 ./data/maildir
 
-4. Run the backup tool
+4. Run the backup:
 
-Run:
-
-./email_backup.py
+go run ./cmd/mail-backup backup
 
 That will:
 - sync mail again
-- check for weird deletions or changes
-- write a restic backup
+- check for suspicious old-mail changes
+- write a Kopia snapshot
 
 USE IT AGAIN LATER
 
-After setup, normal usage is just:
+Normal usage is:
 
-./email_backup.py
+go run ./cmd/mail-backup backup
+
+Or after building:
+
+./mail-backup backup
 
 FILES YOU CARE ABOUT
 
-- mbsyncrc
-- email-backup.toml
-- ./data/maildir
-- ./data/state
-- ./data/restic-repo
+- `.env`
+- `config.advanced`
+- optional `config`
+- `./data/maildir`
+- `./data/state`
 
 IMPORTANT
 
-This is only a local backup on the same machine.
-Good for a first step.
-Not good enough against disk failure, theft, or total machine loss.
+If you keep the Kopia repository on the same machine, this is not enough protection against total machine loss.
+Prefer an off-host repository if the backup matters.

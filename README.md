@@ -1,183 +1,208 @@
-# Email Backup Monitor
+# Mail Backup
 
-This repository contains a single Python program, `email_backup.py`, for a Maildir-based backup workflow:
+`mail-backup` is a standalone Go tool for Maildir-based mail backup and integrity auditing.
 
-- sync mail with `mbsync`
-- build a Maildir manifest
-- compare the current Maildir to the last known-good baseline
-- back up the Maildir with `restic`
-- alert if old messages disappear, change, move mailboxes, or lose copies
+It does four things in one run:
 
-The core idea is simple: once a message has been present long enough to be considered stable, the tool expects that message to remain unchanged. If a mail client, sync bug, or server-side mistake deletes, rewrites, moves, or silently drops copies of old mail, the run exits non-zero and produces an alert report.
+- syncs mail with `mbsync`
+- scans the local Maildir into a manifest
+- alerts if stable mail disappears, mutates, changes mailbox placement, or loses copies
+- backs up the Maildir and tool state with `kopia`
+
+Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. If a stable message vanishes or changes unexpectedly, the run exits with an alert instead of silently accepting the new state.
 
 ## Requirements
 
-- Python 3.11 or newer
+- Go 1.26.1 or newer
 - `mbsync`
-- `restic`
-- a working `mbsync` setup for one remote IMAP account
-- a `restic` repository that you can already write to
+- `kopia`
+- one IMAP account that `mbsync` can mirror into a local Maildir
 
-For stronger guarantees, use an off-host `restic` repository and storage-side immutability or retention controls where possible.
+For stronger guarantees, keep the Kopia repository off-host and use storage-side immutability where possible.
 
 ## Setup
 
-1. Copy the example config:
+Run the interactive setup wizard:
 
-   ```bash
-   cp email-backup.toml.example email-backup.toml
-   cp mbsyncrc.example mbsyncrc
-   ```
+```bash
+go run ./cmd/mail-backup setup
+```
 
-2. Edit `mbsyncrc`:
+The wizard will:
 
-   - set the IMAP host and username
-   - replace `PassCmd` with your preferred secret lookup
-   - keep the local Maildir at `./data/maildir` unless you want a different tool-local path
+1. prompt for IMAP host, username, password, and port
+2. generate the internal `mbsync` config file
+3. prompt for Kopia repository type and credentials
+4. optionally create or connect the Kopia repository
+5. write `.env`
+6. create local working directories
 
-3. Edit `email-backup.toml`:
-
-   - set `restic_repo`
-   - set `env.RESTIC_PASSWORD_FILE` or other required `restic` credentials
-   - adjust `immutability_days`
-   - optionally add an `alert_command`
-
-By default the repository keeps everything self-contained:
-
-- `./mbsyncrc`: dedicated `mbsync` config for this tool
-- `./data/maildir`: synced Maildir
-- `./data/state`: manifests, reports, logs, and locks
-
-4. Make sure your `restic` repo exists. If not, initialize it once:
-
-   ```bash
-   RESTIC_PASSWORD_FILE=./data/restic/password restic -r /path/to/repo init
-   ```
-
-5. Run the first backup:
-
-   ```bash
-   ./email_backup.py
-   ```
-
-The first successful run creates the baseline. From then on, each run compares the current Maildir to that baseline before promoting a new one.
-
-## How It Works
-
-- `run`
-  - runs `mbsync`
-  - scans the Maildir
-  - compares the scan to `state_dir/manifests/baseline.json`
-  - runs `restic backup`
-  - optionally runs periodic `restic check`
-  - promotes the new manifest to the baseline only after a successful backup
-
-- `rebaseline`
-  - accepts the current Maildir state as the new baseline
-  - runs a `restic backup` first so the accepted state is recoverable
-  - use this only after an intentional bulk change, migration, or cleanup that you trust
-
-The script stores state in `state_dir`:
-
-- `logs/`: one run log per execution
-- `manifests/baseline.json`: the last known-good manifest
-- `manifests/latest.json`: the most recent manifest, even after alerts
-- `manifests/*.sha256`: local checksum sidecars for baseline/latest manifests
-- `reports/`: JSON and text reports for each run
-- `alerts.log`: a local history of alerts and failures
+You can rerun `setup` at any time to refresh values.
 
 ## Usage
 
-Run the normal backup flow:
+Build the binary:
 
 ```bash
-./email_backup.py
+make build
+./mail-backup
 ```
 
-Use a custom config path:
+Run a normal backup:
 
 ```bash
-./email_backup.py --config /path/to/email-backup.toml
+./mail-backup backup
 ```
 
-Accept the current state as the new known-good baseline:
+Accept the current Maildir as the new baseline:
 
 ```bash
-./email_backup.py rebaseline
+./mail-backup rebaseline
 ```
+
+Restore a snapshot into a staging directory:
+
+```bash
+./mail-backup restore
+```
+
+Restore a specific snapshot:
+
+```bash
+./mail-backup restore -snapshot <id>
+```
+
+Use custom config and/or env paths:
+
+```bash
+./mail-backup --config /path/to/config --env /path/to/.env backup
+```
+
+## Configuration
+
+The tool uses the same split configuration model as `ical-backup`:
+
+1. `.env` for secrets and Kopia repository settings
+2. `config.advanced` for tracked operational defaults
+3. optional local `config` for overrides
+
+### `.env`
+
+Created by `setup`. Typical values:
+
+```dotenv
+KOPIA_CONFIG_PATH=./data/kopia/repository.config
+KOPIA_PASSWORD=generated-password
+KOPIA_REPO_TYPE=filesystem
+KOPIA_REPO_PATH=./data/kopia/repo
+
+IMAP_HOST=imap.example.com
+IMAP_PORT=993
+IMAP_USERNAME=user@example.com
+IMAP_PASSWORD=app-password
+```
+
+For S3 repositories, `.env` also contains:
+
+```dotenv
+KOPIA_REPO_TYPE=s3
+KOPIA_S3_BUCKET=your-bucket
+KOPIA_S3_ENDPOINT=s3.<region>.wasabisys.com
+KOPIA_S3_PREFIX=mail-backup
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+```
+
+### `config.advanced` and `config`
+
+These files contain non-secret operational settings:
+
+- `MAILDIR_PATH`
+- `STATE_DIR`
+- `REPORT_SAMPLE_LIMIT`
+- `IMMUTABILITY_DAYS`
+- `IGNORE_MAILBOX_REGEX`
+- `KOPIA_MAINTENANCE_INTERVAL_DAYS`
+- `KOPIA_INCLUDE_STATE_DIR`
+- `MBSYNC_CONFIG_PATH`
+- `MBSYNC_COMMAND`
+- `KOPIA_COMMAND`
+- `KOPIA_SNAPSHOT_ARGS`
+- `ALERT_COMMAND`
+
+## How It Works
+
+The backup flow:
+
+- acquires a lock in `state_dir/.lock`
+- regenerates the `mbsync` config from `.env`
+- runs `mbsync`
+- builds the current Maildir manifest
+- compares it to `state_dir/manifests/baseline.json`
+- writes JSON and text reports under `state_dir/reports/`
+- snapshots the Maildir with `kopia`
+- snapshots the state directory too unless disabled
+- runs periodic `kopia maintenance`
+- promotes the new baseline only after a clean backup with no integrity alert
+
+State stored under `state_dir`:
+
+- `logs/`
+- `manifests/baseline.json`
+- `manifests/latest.json`
+- `manifests/*.sha256`
+- `reports/*.json`
+- `reports/*.txt`
+- `alerts.log`
 
 ## Exit Codes
 
 - `0`: success
-- `1`: operational failure, config error, scan failure, or command failure
-- `2`: integrity alert, meaning stable messages disappeared or changed
+- `1`: config error, scan failure, command failure, or restore/setup failure
+- `2`: integrity alert
 
 ## Alerting
 
-If `alert_command` is set, it is executed with `bash -c` semantics. The report body is passed on stdin.
+If `ALERT_COMMAND` is set, it runs with `bash -c` semantics and receives the alert body on stdin.
 
-These environment variables are provided to the alert command:
+These environment variables are provided:
 
-- `EMAIL_BACKUP_STATUS`
-- `EMAIL_BACKUP_ALERT_SUBJECT`
-- `EMAIL_BACKUP_ALERT_BODY`
+- `MAIL_BACKUP_STATUS`
+- `MAIL_BACKUP_ALERT_SUBJECT`
+- `MAIL_BACKUP_ALERT_BODY`
 
 Example mail alert:
 
-```toml
-alert_command = 'mail -s "$EMAIL_BACKUP_ALERT_SUBJECT" you@example.com'
-```
-
-Example Telegram alert:
-
-```toml
-alert_command = 'curl -fsS -X POST "https://api.telegram.org/bot<token>/sendMessage" -d chat_id="<chat-id>" --data-urlencode text@"-"'
-```
-
-## Scheduling
-
-### Cron
-
-Run every hour:
-
-```cron
-0 * * * * /usr/bin/env python3 /Users/you/path/to/mail-bck/email_backup.py >> /tmp/email-backup-cron.log 2>&1
-```
-
-### launchd on macOS
-
-If you prefer `launchd`, create a plist that runs:
-
 ```bash
-/usr/bin/env python3 /Users/you/path/to/mail-bck/email_backup.py
+ALERT_COMMAND='mail -s "$MAIL_BACKUP_ALERT_SUBJECT" you@example.com'
 ```
 
-The script resolves the default config path itself and runs external commands from the config directory, so you do not need a separate `cd`.
+## Restore
+
+`restore` is a local filesystem restore from Kopia snapshots.
+
+- default target: `./restored/<snapshot-id>`
+- `-target` overrides the destination
+- `-force` is required for restoring directly into the configured `MAILDIR_PATH`
+
+The tool does not upload mail back to IMAP or perform server-side replay.
 
 ## Operational Notes
 
-- The tool intentionally ignores `Trash`, `Junk`, `Spam`, and `Drafts` style folders by default, including common Maildir names such as `.Trash` and `.Spam`.
-- Message flags and Maildir filenames can change without being treated as corruption. The audit keys primarily on `Message-ID`, with a content-hash fallback when no `Message-ID` exists.
-- Stability is based on when a message was first seen successfully by the tool when that history is available; older manifests without that field fall back to the message `Date` header.
-- If the scan cannot read some Maildir files, the run fails closed instead of silently producing a partial audit.
-- Message-ID collisions with different bodies are reported as warnings because they indicate ambiguous identity, but not always corruption.
-- The baseline and latest manifests get local SHA-256 sidecars so accidental edits or corruption are detected before they are trusted again.
-- Local paths in `mbsync_command`, `restic_command`, and related config are interpreted relative to the config file directory.
-
-## Recommended First Run Checklist
-
-1. Confirm `mbsync -c ./mbsyncrc mail-backup` already behaves the way you want.
-2. Confirm the `restic` repo is initialized and reachable.
-3. Run `./email_backup.py`.
-4. Inspect the run log and the generated report in `state_dir/reports/`.
-5. Trigger a test alert by temporarily breaking the `alert_command`, or by editing a synthetic test Maildir copy before running in a safe environment.
+- The tool ignores `Trash`, `Junk`, `Spam`, and `Drafts` style folders by default.
+- Identity is based on normalized `Message-ID`, with content-hash fallback when `Message-ID` is missing.
+- Stability is based on `first_seen_ts` carried forward in trusted manifests.
+- The scan fails closed if some Maildir files cannot be read.
+- Baseline and latest manifests use local SHA-256 sidecars so accidental edits are detected before they are trusted again.
+- `mbsync` still uses a config file internally, but this tool generates it automatically from `.env` and `MAILDIR_PATH`.
+- The generated `mbsync` config is pull-only and uses `Expunge Near`, so deletions on the server are removed locally and can be detected by the audit.
 
 ## When To Rebaseline
 
-Use `rebaseline` only when you intentionally changed historical mail and want the tool to trust that new state going forward, for example:
+Use `rebaseline` only for intentional historical changes such as:
 
 - mailbox migration
 - deliberate archival re-import
-- one-time cleanup of broken duplicate messages
+- one-time cleanup of broken duplicates
 
-Do not rebaseline just to make an alert disappear unless you understand exactly why the alert happened.
+Do not rebaseline just to hide an unexplained alert.

@@ -1,0 +1,12 @@
+.DS_Store
+.cache/
+.env
+.env.local
+/mail-backup
+/restored/
+/data/
+/config
+/email-backup.toml
+/mbsyncrc
+/__pycache__/
+/tests/__pycache__/
