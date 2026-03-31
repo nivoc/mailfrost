@@ -1,4 +1,4 @@
-.PHONY: build run backup rebaseline restore setup test fmt clean help
+.PHONY: build run backup recover rebaseline restore setup test fmt clean help
 
 BINARY=mail-backup
 MAIN_SRC=./cmd/mail-backup
@@ -14,6 +14,9 @@ run:
 
 backup:
 	@go run $(MAIN_SRC) backup
+
+recover:
+	@go run $(MAIN_SRC) recover
 
 rebaseline:
 	@go run $(MAIN_SRC) rebaseline
@@ -42,6 +45,7 @@ help:
 	@echo "Targets:"
 	@echo "  build      Build the binary"
 	@echo "  backup     Run the backup flow"
+	@echo "  recover    Destructively rewrite managed IMAP mailboxes from a snapshot"
 	@echo "  rebaseline Accept the current Maildir as the new baseline"
 	@echo "  restore    Restore from a kopia snapshot"
 	@echo "  setup      Run the interactive setup wizard"

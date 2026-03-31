@@ -54,6 +54,12 @@ Run a normal backup:
 ./mail-backup backup
 ```
 
+Recover the managed IMAP mailboxes from a snapshot:
+
+```bash
+./mail-backup recover
+```
+
 Accept the current Maildir as the new baseline:
 
 ```bash
@@ -186,6 +192,35 @@ ALERT_COMMAND='mail -s "$MAIL_BACKUP_ALERT_SUBJECT" you@example.com'
 - `-force` is required for restoring directly into the configured `MAILDIR_PATH`
 
 The tool does not upload mail back to IMAP or perform server-side replay.
+
+## Recover
+
+`recover` is the destructive server-side recovery flow.
+
+- it restores the selected Kopia snapshot into a staging Maildir under `state_dir/recoveries/`
+- it can copy currently managed remote mail into a server-side safety mailbox tree before destructive recovery
+- it rewrites the managed IMAP mailboxes from that staging Maildir using a dedicated temporary `mbsync` config
+- managed mailboxes are the mailboxes not matched by `IGNORE_MAILBOX_REGEX`
+- it uses isolated temporary `mbsync` `SyncState`, separate from normal backup sync state
+- interactive mode asks whether to create the safety copy and warns that it may temporarily require about 2x mailbox space
+- non-interactive mode keeps the safety copy enabled by default
+- interactive mode requires typed confirmation of the IMAP login user
+- non-interactive mode requires both `-yes` and `-confirm-user <imap-username>`
+
+Examples:
+
+```bash
+./mail-backup recover -snapshot <id>
+./mail-backup recover -snapshot <id> -yes -confirm-user user@example.com
+```
+
+Important behavior:
+
+- before deleting anything, the tool copies current managed remote mail under a mailbox root like `Recovery-Safety-20260331T171900`
+- in interactive mode you can decline the safety copy, but then newer mail in managed mailboxes has no automatic rescue path
+- this deletes mail from the managed IMAP mailboxes before re-uploading the snapshot
+- ignored folders such as `Trash`, `Junk`, `Spam`, and `Drafts` are left alone by default
+- after a successful recovery, run `backup` and then `rebaseline` if the recovered state is now intentional truth
 
 ## Operational Notes
 

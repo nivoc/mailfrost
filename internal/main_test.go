@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -178,6 +179,17 @@ func TestLoadManifestRejectsChecksumMismatch(t *testing.T) {
 	}
 	if _, err := LoadManifest(path); err == nil {
 		t.Fatalf("LoadManifest() error = nil, want checksum mismatch")
+	}
+}
+
+func TestSetupPromptOptionalAllowsClearingExistingValue(t *testing.T) {
+	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("-\n"))}
+	value, err := app.promptOptional("S3 prefix", "existing/", false)
+	if err != nil {
+		t.Fatalf("promptOptional() error = %v", err)
+	}
+	if value != "" {
+		t.Fatalf("promptOptional() = %q, want empty string", value)
 	}
 }
 

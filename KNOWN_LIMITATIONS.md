@@ -26,6 +26,12 @@ The tool can restore a Maildir snapshot from Kopia into a local directory, but i
 
 If you need server-side recovery, restore locally first and then use a separate, explicit process to re-import or resync the recovered mail.
 
+## Recover Is Destructive For Managed IMAP Mailboxes
+
+`recover` is intentionally not a smart bidirectional sync. It clears the managed IMAP mailboxes and then repopulates them from the restored snapshot through a dedicated temporary `mbsync` push configuration with isolated `SyncState`.
+
+Before clearing those mailboxes, the tool now copies current managed remote mail into a safety mailbox tree on the server. That gives you a rescue point for mail that arrived after the chosen snapshot, but a failed recovery can still leave the managed server state only partially rebuilt until you rerun recovery or restore from another snapshot.
+
 ## State Retention Is Not Automatic
 
 Logs, manifests, reports, and checksum sidecars accumulate over time. This repository does not impose a built-in pruning policy because the right retention window depends on how much audit history you want to keep.

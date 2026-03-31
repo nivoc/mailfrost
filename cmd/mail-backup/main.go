@@ -21,6 +21,7 @@ func runMain() int {
 
 Commands:
   backup      Sync mail, audit stable messages, and create a kopia backup
+  recover     Restore a snapshot and rewrite the managed IMAP mailboxes to match it
   rebaseline  Accept the current Maildir state as the new known-good baseline
   restore     Restore a Maildir snapshot from kopia
   setup       Interactive setup wizard for mbsync and kopia
@@ -36,6 +37,14 @@ Restore flags (use after "restore"):
         Restore target directory (default: ./restored/<snapshot-id>)
   -force
         Allow restoring directly into the configured MAILDIR_PATH without interactive confirmation
+
+Recover flags (use after "recover"):
+  -snapshot string
+        Snapshot ID to recover (skip interactive selection)
+  -yes
+        Allow destructive recovery without yes/no prompt
+  -confirm-user string
+        IMAP username confirmation for non-interactive destructive recovery
 `)
 	}
 	flag.Parse()
@@ -51,6 +60,8 @@ Restore flags (use after "restore"):
 		return 0
 	case "backup":
 		return runBackup(*configPath, *envPath)
+	case "recover":
+		return runRecover(*configPath, *envPath, flag.Args()[1:])
 	case "rebaseline":
 		return runRebaseline(*configPath, *envPath)
 	case "restore":
@@ -58,7 +69,7 @@ Restore flags (use after "restore"):
 	case "setup":
 		return runSetup(*envPath)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mail-backup [backup|rebaseline|restore|setup]\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mail-backup [backup|recover|rebaseline|restore|setup]\n", subcommand)
 		return 1
 	}
 }
@@ -145,6 +156,42 @@ func runRestore(configPath, envPath string, args []string) int {
 		SnapshotFlag: *snapshotFlag,
 		TargetFlag:   *targetFlag,
 		ForceFlag:    *forceFlag,
+	}
+	if err := app.Run(); err != nil {
+		internal.NotifyRuntimeFailure(runtime, err)
+		return 1
+	}
+	return 0
+}
+
+func runRecover(configPath, envPath string, args []string) int {
+	recoverFlags := flag.NewFlagSet("recover", flag.ExitOnError)
+	snapshotFlag := recoverFlags.String("snapshot", "", "Snapshot ID to recover")
+	yesFlag := recoverFlags.Bool("yes", false, "Allow destructive recovery without yes/no prompt")
+	confirmUserFlag := recoverFlags.String("confirm-user", "", "IMAP username confirmation for non-interactive destructive recovery")
+	if err := recoverFlags.Parse(args); err != nil {
+		return 1
+	}
+
+	config, err := internal.LoadConfig(configPath, envPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+
+	runtime, err := internal.StartRuntime(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	defer runtime.Close()
+
+	app := &internal.RecoverApp{
+		Config:          config,
+		Runtime:         runtime,
+		SnapshotFlag:    *snapshotFlag,
+		YesFlag:         *yesFlag,
+		ConfirmUserFlag: *confirmUserFlag,
 	}
 	if err := app.Run(); err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)

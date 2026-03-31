@@ -128,7 +128,7 @@ func (a *SetupApp) Run() error {
 		if err != nil {
 			return err
 		}
-		s3Prefix, err = a.prompt("S3 prefix (optional, subpath inside bucket)", existing["KOPIA_S3_PREFIX"], false)
+		s3Prefix, err = a.promptOptional("S3 prefix (optional, subpath inside bucket; enter - to clear)", existing["KOPIA_S3_PREFIX"], false)
 		if err != nil {
 			return err
 		}
@@ -140,68 +140,6 @@ func (a *SetupApp) Run() error {
 		awsSecret, err = a.prompt("AWS secret access key", existing["AWS_SECRET_ACCESS_KEY"], true)
 		if err != nil {
 			return err
-		}
-	}
-
-	if repoType == "s3" {
-		defaultObjectLock := existing["KOPIA_S3_OBJECT_LOCK_MODE"] != ""
-		enableObjectLock, err := a.promptYesNo("Enable S3 Object Lock ransomware protection", defaultObjectLock)
-		if err != nil {
-			return err
-		}
-		if enableObjectLock {
-			modeDefault := strings.ToUpper(strings.TrimSpace(existing["KOPIA_S3_OBJECT_LOCK_MODE"]))
-			if modeDefault != "GOVERNANCE" {
-				modeDefault = "COMPLIANCE"
-			}
-			fmt.Println("Object Lock retention mode:")
-			if modeDefault == "COMPLIANCE" {
-				fmt.Println("  [1] COMPLIANCE (recommended) - nobody can shorten/remove the lock")
-				fmt.Println("  [2] GOVERNANCE - privileged users can override the lock")
-			} else {
-				fmt.Println("  [1] COMPLIANCE - nobody can shorten/remove the lock")
-				fmt.Println("  [2] GOVERNANCE (current) - privileged users can override the lock")
-			}
-			fmt.Println()
-			modePrompt := "Select retention mode"
-			modeDefaultChoice := "1"
-			if modeDefault == "GOVERNANCE" {
-				modeDefaultChoice = "2"
-			}
-			modeInput, err := a.prompt(modePrompt, modeDefaultChoice, false)
-			if err != nil {
-				return err
-			}
-			switch strings.TrimSpace(strings.ToUpper(modeInput)) {
-			case "1", "COMPLIANCE":
-				objectLock.RetentionMode = "COMPLIANCE"
-			case "2", "GOVERNANCE":
-				objectLock.RetentionMode = "GOVERNANCE"
-			default:
-				return fmt.Errorf("invalid object lock retention mode: %s", modeInput)
-			}
-
-			retentionDaysDefault := 3
-			if existingDays, err := strconv.Atoi(existing["KOPIA_S3_OBJECT_LOCK_DAYS"]); err == nil && existingDays > 0 {
-				retentionDaysDefault = existingDays
-			}
-			retentionDaysInput, err := a.prompt("Object Lock retention days", strconv.Itoa(retentionDaysDefault), false)
-			if err != nil {
-				return err
-			}
-			retentionDays, err := strconv.Atoi(strings.TrimSpace(retentionDaysInput))
-			if err != nil || retentionDays < 2 {
-				return fmt.Errorf("object lock retention days must be an integer >= 2")
-			}
-
-			fmt.Println("Checking S3 Object Lock status...")
-			if err := validateS3ObjectLockEnabled(s3Bucket, s3Endpoint, awsKeyID, awsSecret); err != nil {
-				return fmt.Errorf("s3 object lock check failed: %w", err)
-			}
-			fmt.Println("S3 Object Lock is enabled on the bucket.")
-
-			objectLock.Enabled = true
-			objectLock.RetentionDays = retentionDays
 		}
 	}
 
@@ -292,6 +230,68 @@ func (a *SetupApp) Run() error {
 	repoAction, err := a.prompt("Select", "1", false)
 	if err != nil {
 		return err
+	}
+
+	if repoType == "s3" && repoAction == "1" {
+		defaultObjectLock := existing["KOPIA_S3_OBJECT_LOCK_MODE"] != ""
+		enableObjectLock, err := a.promptYesNo("Enable S3 Object Lock ransomware protection", defaultObjectLock)
+		if err != nil {
+			return err
+		}
+		if enableObjectLock {
+			modeDefault := strings.ToUpper(strings.TrimSpace(existing["KOPIA_S3_OBJECT_LOCK_MODE"]))
+			if modeDefault != "GOVERNANCE" {
+				modeDefault = "COMPLIANCE"
+			}
+			fmt.Println("Object Lock retention mode:")
+			if modeDefault == "COMPLIANCE" {
+				fmt.Println("  [1] COMPLIANCE (recommended) - nobody can shorten/remove the lock")
+				fmt.Println("  [2] GOVERNANCE - privileged users can override the lock")
+			} else {
+				fmt.Println("  [1] COMPLIANCE - nobody can shorten/remove the lock")
+				fmt.Println("  [2] GOVERNANCE (current) - privileged users can override the lock")
+			}
+			fmt.Println()
+			modePrompt := "Select retention mode"
+			modeDefaultChoice := "1"
+			if modeDefault == "GOVERNANCE" {
+				modeDefaultChoice = "2"
+			}
+			modeInput, err := a.prompt(modePrompt, modeDefaultChoice, false)
+			if err != nil {
+				return err
+			}
+			switch strings.TrimSpace(strings.ToUpper(modeInput)) {
+			case "1", "COMPLIANCE":
+				objectLock.RetentionMode = "COMPLIANCE"
+			case "2", "GOVERNANCE":
+				objectLock.RetentionMode = "GOVERNANCE"
+			default:
+				return fmt.Errorf("invalid object lock retention mode: %s", modeInput)
+			}
+
+			retentionDaysDefault := 3
+			if existingDays, err := strconv.Atoi(existing["KOPIA_S3_OBJECT_LOCK_DAYS"]); err == nil && existingDays > 0 {
+				retentionDaysDefault = existingDays
+			}
+			retentionDaysInput, err := a.prompt("Object Lock retention days", strconv.Itoa(retentionDaysDefault), false)
+			if err != nil {
+				return err
+			}
+			retentionDays, err := strconv.Atoi(strings.TrimSpace(retentionDaysInput))
+			if err != nil || retentionDays < 2 {
+				return fmt.Errorf("object lock retention days must be an integer >= 2")
+			}
+
+			fmt.Println("Checking S3 Object Lock status...")
+			if err := validateS3ObjectLockEnabled(s3Bucket, s3Endpoint, awsKeyID, awsSecret); err != nil {
+				return fmt.Errorf("s3 object lock check failed: %w", err)
+			}
+			fmt.Println("S3 Object Lock is enabled on the bucket.")
+
+			objectLock.Enabled = true
+			objectLock.RetentionDays = retentionDays
+		}
 	}
 
 	if repoAction == "1" || repoAction == "2" {
@@ -441,6 +441,17 @@ func (a *SetupApp) prompt(label, defaultValue string, mask bool) (string, error)
 		return defaultValue, nil
 	}
 	return line, nil
+}
+
+func (a *SetupApp) promptOptional(label, defaultValue string, mask bool) (string, error) {
+	value, err := a.prompt(label, defaultValue, mask)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) == "-" {
+		return "", nil
+	}
+	return value, nil
 }
 
 func (a *SetupApp) promptYesNo(label string, defaultValue bool) (bool, error) {
