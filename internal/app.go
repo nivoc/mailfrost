@@ -244,6 +244,9 @@ func (a *App) runKopiaSnapshotPath(path string, extraArgs []string) (string, str
 	command = append(command, a.kopiaBaseArgs()...)
 	command = append(command, "--json")
 	command = append(command, extraArgs...)
+	if path == a.Config.MaildirPath {
+		command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
+	}
 	command = append(command, path)
 
 	output, err := a.Runtime.RunCommand(command, nil)

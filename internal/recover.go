@@ -72,7 +72,7 @@ func (a *RecoverApp) Run() error {
 	}
 
 	a.Runtime.Console("Loading snapshots...")
-	snapshots, err := restoreApp.listSnapshots(10)
+	snapshots, scope, err := restoreApp.loadSnapshotsForSelection(10)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (a *RecoverApp) Run() error {
 	if a.SnapshotFlag != "" {
 		selected, err = restoreApp.findSnapshot(a.SnapshotFlag)
 	} else {
-		selected, err = restoreApp.promptSnapshot(snapshots)
+		selected, err = restoreApp.promptSnapshot(snapshots, scope)
 	}
 	if err != nil {
 		return err
@@ -95,12 +95,12 @@ func (a *RecoverApp) Run() error {
 	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
 		return fmt.Errorf("create recovery staging dir: %w", err)
 	}
-	stagingPath, err := os.MkdirTemp(stagingRoot, "snapshot-"+selected.ShortID()+"-")
+	stagingPath, restoredFresh, err := a.prepareRecoveryStaging(restoreApp, selected, stagingRoot)
 	if err != nil {
-		return fmt.Errorf("create recovery staging dir: %w", err)
-	}
-	if err := restoreApp.restoreSnapshot(selected, stagingPath); err != nil {
 		return err
+	}
+	if !restoredFresh {
+		a.Runtime.Console(fmt.Sprintf("Reusing existing staged snapshot at %s", stagingPath))
 	}
 
 	desiredMailboxes, err := collectRecoverMaildir(stagingPath, a.Config.IgnoreMailboxRegex)
@@ -115,9 +115,9 @@ func (a *RecoverApp) Run() error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
 
 	plan, err := a.buildPlan(store, selected, stagingPath, desiredMailboxes)
+	_ = store.Close()
 	if err != nil {
 		return err
 	}
@@ -133,13 +133,13 @@ func (a *RecoverApp) Run() error {
 	if err := a.confirm(plan); err != nil {
 		return err
 	}
-	if err := a.executePlan(store, plan); err != nil {
+	if err := a.executePlan(plan); err != nil {
 		return err
 	}
-	if err := a.verifyPlan(store, plan); err != nil {
+	if err := a.verifyPlan(plan); err != nil {
 		return err
 	}
-	if err := a.postRecoveryCleanup(store, plan); err != nil {
+	if err := a.postRecoveryCleanup(plan); err != nil {
 		return err
 	}
 
@@ -204,6 +204,34 @@ func (a *RecoverApp) buildPlan(store recoverStore, snapshot kopiaSnapshot, stagi
 	}, nil
 }
 
+func (a *RecoverApp) prepareRecoveryStaging(restoreApp *RestoreApp, snapshot kopiaSnapshot, stagingRoot string) (string, bool, error) {
+	existing, err := findLatestRecoveryStaging(stagingRoot, snapshot.ShortID())
+	if err != nil {
+		return "", false, err
+	}
+	if existing != "" {
+		reuse := a.YesFlag
+		if !a.YesFlag {
+			reuse, err = a.promptYesNo(fmt.Sprintf("Reuse existing staged snapshot at %s", existing), true)
+			if err != nil {
+				return "", false, err
+			}
+		}
+		if reuse {
+			return existing, false, nil
+		}
+	}
+
+	stagingPath, err := os.MkdirTemp(stagingRoot, "snapshot-"+snapshot.ShortID()+"-")
+	if err != nil {
+		return "", false, fmt.Errorf("create recovery staging dir: %w", err)
+	}
+	if err := restoreApp.restoreSnapshot(snapshot, stagingPath); err != nil {
+		return "", false, err
+	}
+	return stagingPath, true, nil
+}
+
 func (a *RecoverApp) printPlan(plan recoverPlan) {
 	host, port, username, _ := a.imapConnectionInfo()
 
@@ -258,12 +286,12 @@ func (a *RecoverApp) confirm(plan recoverPlan) error {
 	return nil
 }
 
-func (a *RecoverApp) executePlan(store recoverStore, plan recoverPlan) error {
+func (a *RecoverApp) executePlan(plan recoverPlan) error {
 	if plan.SafetyCopyEnabled {
-		if err := a.createSafetyMailboxTree(store, plan); err != nil {
+		if err := a.createSafetyMailboxTree(plan); err != nil {
 			return err
 		}
-		if err := a.copyManagedMailToSafety(store, plan); err != nil {
+		if err := a.copyManagedMailToSafety(plan); err != nil {
 			return err
 		}
 	}
@@ -272,9 +300,15 @@ func (a *RecoverApp) executePlan(store recoverStore, plan recoverPlan) error {
 		a.Runtime.Console("Clearing messages from managed remote mailboxes...")
 		for _, mailbox := range sortRemoteMailboxesByDepth(plan.ClearMailboxes, true) {
 			a.Runtime.LogFile("INFO", fmt.Sprintf("Clear remote mailbox: %s", mailbox.Name))
-			if _, err := store.ClearMailbox(mailbox.Name); err != nil {
+			var cleared int
+			if err := a.withRecoverStoreRetry(fmt.Sprintf("clear remote mailbox %s", mailbox.Name), func(store recoverStore) error {
+				var err error
+				cleared, err = store.ClearMailbox(mailbox.Name)
+				return err
+			}); err != nil {
 				return fmt.Errorf("clear remote mailbox %s: %w", mailbox.Name, err)
 			}
+			_ = cleared
 		}
 	}
 
@@ -282,7 +316,9 @@ func (a *RecoverApp) executePlan(store recoverStore, plan recoverPlan) error {
 		a.Runtime.Console("Deleting empty remote mailboxes absent from the snapshot...")
 		for _, mailbox := range sortMailboxNamesByDepth(plan.DeleteMailboxes, true) {
 			a.Runtime.LogFile("INFO", fmt.Sprintf("Delete remote mailbox: %s", mailbox))
-			if err := store.DeleteMailbox(mailbox); err != nil {
+			if err := a.withRecoverStoreRetry(fmt.Sprintf("delete remote mailbox %s", mailbox), func(store recoverStore) error {
+				return store.DeleteMailbox(mailbox)
+			}); err != nil {
 				return fmt.Errorf("delete remote mailbox %s: %w", mailbox, err)
 			}
 		}
@@ -300,14 +336,19 @@ func (a *RecoverApp) executePlan(store recoverStore, plan recoverPlan) error {
 	return nil
 }
 
-func (a *RecoverApp) verifyPlan(store recoverStore, plan recoverPlan) error {
+func (a *RecoverApp) verifyPlan(plan recoverPlan) error {
 	ignorePattern, err := regexp.Compile(a.Config.IgnoreMailboxRegex)
 	if err != nil {
 		return fmt.Errorf("compile ignore_mailbox_regex: %w", err)
 	}
 
 	a.Runtime.Console("Verifying managed IMAP mailbox counts...")
-	remoteMailboxes, err := store.ListManagedMailboxes(ignorePattern)
+	var remoteMailboxes []recoverRemoteMailbox
+	err = a.withRecoverStoreRetry("verify managed IMAP mailbox counts", func(store recoverStore) error {
+		var listErr error
+		remoteMailboxes, listErr = store.ListManagedMailboxes(ignorePattern)
+		return listErr
+	})
 	if err != nil {
 		return err
 	}
@@ -353,6 +394,25 @@ func (a *RecoverApp) imapConnectionInfo() (string, string, string, string) {
 		port = "993"
 	}
 	return host, port, username, password
+}
+
+func (a *RecoverApp) withRecoverStore(fn func(store recoverStore) error) error {
+	store, err := connectRecoverStore(a.Config)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return fn(store)
+}
+
+func (a *RecoverApp) withRecoverStoreRetry(action string, fn func(store recoverStore) error) error {
+	err := a.withRecoverStore(fn)
+	if err == nil || !isRecoverStoreRetryable(err) {
+		return err
+	}
+	a.Runtime.Console(fmt.Sprintf("IMAP connection dropped while trying to %s. Reconnecting and retrying once...", action))
+	a.Runtime.LogFile("WARN", fmt.Sprintf("Retrying after recoverable IMAP error during %s: %v", action, err))
+	return a.withRecoverStore(fn)
 }
 
 func (a *RecoverApp) prompt(label string) (string, error) {
@@ -442,6 +502,35 @@ func collectRecoverMaildir(maildirRoot, ignoreMailboxRegex string) ([]recoverMai
 		result = append(result, recoverMailbox{Name: name, MessageCount: mailboxes[name]})
 	}
 	return result, nil
+}
+
+func findLatestRecoveryStaging(stagingRoot, snapshotShortID string) (string, error) {
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read recovery staging dir: %w", err)
+	}
+
+	prefix := "snapshot-" + snapshotShortID + "-"
+	var newestPath string
+	var newestMod time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		fullPath := filepath.Join(stagingRoot, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return "", fmt.Errorf("stat recovery staging dir %s: %w", fullPath, err)
+		}
+		if newestPath == "" || info.ModTime().After(newestMod) {
+			newestPath = fullPath
+			newestMod = info.ModTime()
+		}
+	}
+	return newestPath, nil
 }
 
 func normalizeRecoveryMaildirTimes(maildirRoot, ignoreMailboxRegex string) error {
@@ -697,6 +786,29 @@ func recoverMailboxIgnored(name string, ignorePattern *regexp.Regexp) bool {
 	return ignorePattern != nil && ignorePattern.String() != "" && ignorePattern.MatchString(name)
 }
 
+func isRecoverStoreRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"broken pipe",
+		"connection reset by peer",
+		"connection closed",
+		"use of closed network connection",
+		"unexpected eof",
+		"eof",
+		"i/o timeout",
+		"read: timeout",
+		"write: timeout",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *RecoverApp) chooseSafetyCopy(plan *recoverPlan) error {
 	safetyCopy, err := a.promptYesNo("Create a server-side safety copy before recovery (recommended, uses about 2x temporary mailbox space)", true)
 	if err != nil {
@@ -729,7 +841,7 @@ func recoverRunID(runtime *Runtime) string {
 	return runtime.RunID
 }
 
-func (a *RecoverApp) createSafetyMailboxTree(store recoverStore, plan recoverPlan) error {
+func (a *RecoverApp) createSafetyMailboxTree(plan recoverPlan) error {
 	a.Runtime.Console("Creating recovery safety mailbox tree...")
 	rootAndChildren := []string{plan.SafetyMailboxRoot}
 	for _, mailbox := range plan.ManagedRemote {
@@ -737,26 +849,31 @@ func (a *RecoverApp) createSafetyMailboxTree(store recoverStore, plan recoverPla
 	}
 	for _, mailbox := range sortMailboxNamesByDepth(rootAndChildren, false) {
 		a.Runtime.LogFile("INFO", fmt.Sprintf("Create safety mailbox: %s", mailbox))
-		if err := store.CreateMailbox(mailbox); err != nil {
+		if err := a.withRecoverStoreRetry(fmt.Sprintf("create safety mailbox %s", mailbox), func(store recoverStore) error {
+			return store.CreateMailbox(mailbox)
+		}); err != nil {
 			return fmt.Errorf("create safety mailbox %s: %w", mailbox, err)
 		}
 	}
 	return nil
 }
 
-func (a *RecoverApp) copyManagedMailToSafety(store recoverStore, plan recoverPlan) error {
+func (a *RecoverApp) copyManagedMailToSafety(plan recoverPlan) error {
 	a.Runtime.Console("Copying current managed remote mail into the safety mailbox tree...")
 	for _, mailbox := range sortRemoteMailboxesByDepth(plan.ManagedRemote, false) {
 		target := recoverySafetyMailboxName(plan.SafetyMailboxRoot, mailbox.Name)
 		a.Runtime.LogFile("INFO", fmt.Sprintf("Copy remote mailbox %s to safety mailbox %s", mailbox.Name, target))
-		if _, err := store.CopyMailboxMessages(mailbox.Name, target); err != nil {
+		if err := a.withRecoverStoreRetry(fmt.Sprintf("copy remote mailbox %s to safety mailbox %s", mailbox.Name, target), func(store recoverStore) error {
+			_, err := store.CopyMailboxMessages(mailbox.Name, target)
+			return err
+		}); err != nil {
 			return fmt.Errorf("copy remote mailbox %s to safety mailbox %s: %w", mailbox.Name, target, err)
 		}
 	}
 	return nil
 }
 
-func (a *RecoverApp) postRecoveryCleanup(store recoverStore, plan recoverPlan) error {
+func (a *RecoverApp) postRecoveryCleanup(plan recoverPlan) error {
 	if a.YesFlag {
 		return nil
 	}

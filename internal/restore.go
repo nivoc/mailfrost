@@ -21,6 +21,13 @@ type RestoreApp struct {
 	stdin        *bufio.Reader
 }
 
+type snapshotScope int
+
+const (
+	snapshotScopeAccount snapshotScope = iota
+	snapshotScopeAllMailBackup
+)
+
 type kopiaSnapshot struct {
 	ID        string          `json:"id"`
 	Source    kopiaSource     `json:"source"`
@@ -64,7 +71,7 @@ func (a *RestoreApp) Run() error {
 	a.stdin = bufio.NewReader(os.Stdin)
 
 	a.Runtime.Console("Loading snapshots...")
-	snapshots, err := a.listSnapshots(10)
+	snapshots, scope, err := a.loadSnapshotsForSelection(10)
 	if err != nil {
 		return err
 	}
@@ -80,7 +87,7 @@ func (a *RestoreApp) Run() error {
 			return err
 		}
 	} else {
-		selected, err = a.promptSnapshot(snapshots)
+		selected, err = a.promptSnapshot(snapshots, scope)
 		if err != nil {
 			return err
 		}
@@ -106,12 +113,18 @@ func (a *RestoreApp) kopiaBaseArgs() []string {
 }
 
 func (a *RestoreApp) listSnapshots(limit int) ([]kopiaSnapshot, error) {
+	return a.listSnapshotsForScope(limit, snapshotScopeAccount)
+}
+
+func (a *RestoreApp) listSnapshotsForScope(limit int, scope snapshotScope) ([]kopiaSnapshot, error) {
 	command := append([]string{}, a.Config.KopiaCommand...)
 	command = append(command, "snapshot", "list", "--json")
 	command = append(command, a.kopiaBaseArgs()...)
 	command = append(command, "--tags", "purpose:mail-backup")
+	if scope == snapshotScopeAccount {
+		command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
+	}
 	command = append(command, "-n", strconv.Itoa(limit))
-	command = append(command, a.Config.MaildirPath)
 
 	output, err := a.Runtime.RunCommand(command, nil)
 	if err != nil {
@@ -129,7 +142,7 @@ func (a *RestoreApp) listSnapshots(limit int) ([]kopiaSnapshot, error) {
 }
 
 func (a *RestoreApp) findSnapshot(prefix string) (kopiaSnapshot, error) {
-	snapshots, err := a.listSnapshots(100)
+	snapshots, err := a.listSnapshotsForScope(100, snapshotScopeAccount)
 	if err != nil {
 		return kopiaSnapshot{}, err
 	}
@@ -138,16 +151,36 @@ func (a *RestoreApp) findSnapshot(prefix string) (kopiaSnapshot, error) {
 			return snapshot, nil
 		}
 	}
+	allSnapshots, err := a.listSnapshotsForScope(100, snapshotScopeAllMailBackup)
+	if err != nil {
+		return kopiaSnapshot{}, err
+	}
+	if len(allSnapshots) > 0 {
+		ok, err := a.promptYesNo("No snapshots found for the configured account. Show snapshots for all mail-backup accounts in this repository", false)
+		if err != nil {
+			return kopiaSnapshot{}, err
+		}
+		if ok {
+			for _, snapshot := range allSnapshots {
+				if strings.HasPrefix(snapshot.ID, prefix) {
+					return snapshot, nil
+				}
+			}
+		}
+	}
 	return kopiaSnapshot{}, fmt.Errorf("no snapshot matching %q found", prefix)
 }
 
-func (a *RestoreApp) promptSnapshot(snapshots []kopiaSnapshot) (kopiaSnapshot, error) {
+func (a *RestoreApp) promptSnapshot(snapshots []kopiaSnapshot, scope snapshotScope) (kopiaSnapshot, error) {
 	const pad = "         "
 	loaded := snapshots
 	pageSize := len(snapshots)
 
 	for {
 		a.Runtime.ConsoleRaw(fmt.Sprintf("%sAvailable snapshots:\n", pad))
+		if scope == snapshotScopeAllMailBackup {
+			a.Runtime.ConsoleRaw(fmt.Sprintf("%s  showing all mail-backup snapshots in this repository\n", pad))
+		}
 		for i, snapshot := range loaded {
 			summary := ""
 			if snapshot.RootEntry != nil && snapshot.RootEntry.Summary != nil {
@@ -169,7 +202,7 @@ func (a *RestoreApp) promptSnapshot(snapshots []kopiaSnapshot) (kopiaSnapshot, e
 		}
 		if input == "m" {
 			pageSize += 10
-			more, err := a.listSnapshots(pageSize)
+			more, err := a.listSnapshotsForScope(pageSize, scope)
 			if err != nil {
 				return kopiaSnapshot{}, err
 			}
@@ -183,6 +216,36 @@ func (a *RestoreApp) promptSnapshot(snapshots []kopiaSnapshot) (kopiaSnapshot, e
 		}
 		return loaded[num-1], nil
 	}
+}
+
+func (a *RestoreApp) loadSnapshotsForSelection(limit int) ([]kopiaSnapshot, snapshotScope, error) {
+	snapshots, err := a.listSnapshotsForScope(limit, snapshotScopeAccount)
+	if err != nil {
+		return nil, snapshotScopeAccount, err
+	}
+	allSnapshots, err := a.listSnapshotsForScope(limit, snapshotScopeAllMailBackup)
+	if err != nil {
+		return nil, snapshotScopeAccount, err
+	}
+	return a.chooseSnapshotScope(snapshots, allSnapshots)
+}
+
+func (a *RestoreApp) chooseSnapshotScope(accountSnapshots, allSnapshots []kopiaSnapshot) ([]kopiaSnapshot, snapshotScope, error) {
+	if len(accountSnapshots) > 0 {
+		return accountSnapshots, snapshotScopeAccount, nil
+	}
+	if len(allSnapshots) == 0 {
+		return nil, snapshotScopeAccount, nil
+	}
+
+	ok, err := a.promptYesNo("No snapshots found for the configured account. Show snapshots for all mail-backup accounts in this repository", false)
+	if err != nil {
+		return nil, snapshotScopeAccount, err
+	}
+	if !ok {
+		return nil, snapshotScopeAccount, nil
+	}
+	return allSnapshots, snapshotScopeAllMailBackup, nil
 }
 
 func (a *RestoreApp) resolveRestoreTarget(snapshot kopiaSnapshot) (string, error) {

@@ -200,6 +200,7 @@ The tool does not upload mail back to IMAP or perform server-side replay.
 - it restores the selected Kopia snapshot into a staging Maildir under `state_dir/recoveries/`
 - it can copy currently managed remote mail into a server-side safety mailbox tree before destructive recovery
 - it rewrites the managed IMAP mailboxes from that staging Maildir using a dedicated temporary `mbsync` config
+- it discovers snapshots by mail-backup purpose plus the configured IMAP account, so recovery works from a different local directory on another machine
 - managed mailboxes are the mailboxes not matched by `IGNORE_MAILBOX_REGEX`
 - it uses isolated temporary `mbsync` `SyncState`, separate from normal backup sync state
 - interactive mode asks whether to create the safety copy and warns that it may temporarily require about 2x mailbox space

@@ -183,7 +183,7 @@ func TestLoadManifestRejectsChecksumMismatch(t *testing.T) {
 }
 
 func TestSetupPromptOptionalAllowsClearingExistingValue(t *testing.T) {
-	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("-\n"))}
+	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("/\n"))}
 	value, err := app.promptOptional("S3 prefix", "existing/", false)
 	if err != nil {
 		t.Fatalf("promptOptional() error = %v", err)
@@ -233,6 +233,77 @@ func TestSetupPromptOptionalClearDoesNotReintroduceExistingS3Prefix(t *testing.T
 	}
 	if values["IMAP_HOST"] != "imap.example.com" {
 		t.Fatalf("other existing values should still be preserved")
+	}
+}
+
+func TestRenderGeneratedKopiaPasswordNotice(t *testing.T) {
+	got := renderGeneratedKopiaPasswordNotice("secret-value")
+	for _, needle := range []string{
+		"IMPORTANT: GENERATED KOPIA PASSWORD",
+		"If you lose this password, your backups are effectively useless.",
+		"Save it somewhere safe before continuing.",
+		"KOPIA_PASSWORD=secret-value",
+	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("renderGeneratedKopiaPasswordNotice() missing %q in:\n%s", needle, got)
+		}
+	}
+}
+
+func TestNormalizedAccountTagKeepsReadableStableSlug(t *testing.T) {
+	got := normalizedAccountTag("Testing+Inbox@mk1.me")
+	want := "testing-inbox-mk1-me"
+	if got != want {
+		t.Fatalf("normalizedAccountTag() = %q, want %q", got, want)
+	}
+}
+
+func TestChooseSnapshotScopeFallsBackAfterPrompt(t *testing.T) {
+	restore := &RestoreApp{stdin: bufio.NewReader(strings.NewReader("y\n"))}
+	allSnapshots := []kopiaSnapshot{{ID: "abcdef123456", StartTime: "2026-04-01T09:56:01Z"}}
+
+	snapshots, scope, err := restore.chooseSnapshotScope(nil, allSnapshots)
+	if err != nil {
+		t.Fatalf("chooseSnapshotScope() error = %v", err)
+	}
+	if scope != snapshotScopeAllMailBackup {
+		t.Fatalf("scope = %v, want snapshotScopeAllMailBackup", scope)
+	}
+	if len(snapshots) != 1 || snapshots[0].ID != "abcdef123456" {
+		t.Fatalf("snapshots = %v", snapshots)
+	}
+}
+
+func TestResolveKopiaPasswordPromptsForExistingPasswordWhenConnecting(t *testing.T) {
+	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("existing-secret\n"))}
+	got, err := app.resolveKopiaPassword("", "2")
+	if err != nil {
+		t.Fatalf("resolveKopiaPassword() error = %v", err)
+	}
+	if got != "existing-secret" {
+		t.Fatalf("resolveKopiaPassword() = %q, want existing-secret", got)
+	}
+}
+
+func TestResolveKopiaPasswordUsesExistingPasswordWhenConnecting(t *testing.T) {
+	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("\n"))}
+	got, err := app.resolveKopiaPassword("stored-secret", "2")
+	if err != nil {
+		t.Fatalf("resolveKopiaPassword() error = %v", err)
+	}
+	if got != "stored-secret" {
+		t.Fatalf("resolveKopiaPassword() = %q, want stored-secret", got)
+	}
+}
+
+func TestResolveKopiaPasswordAllowsOverridingStoredPasswordWhenConnecting(t *testing.T) {
+	app := &SetupApp{stdin: bufio.NewReader(strings.NewReader("new-secret\n"))}
+	got, err := app.resolveKopiaPassword("stored-secret", "2")
+	if err != nil {
+		t.Fatalf("resolveKopiaPassword() error = %v", err)
+	}
+	if got != "new-secret" {
+		t.Fatalf("resolveKopiaPassword() = %q, want new-secret", got)
 	}
 }
 

@@ -94,23 +94,6 @@ func (a *SetupApp) Run() error {
 		return err
 	}
 
-	kopiaPassword := existing["KOPIA_PASSWORD"]
-	if kopiaPassword == "" {
-		generate, err := a.promptYesNo("Generate a new Kopia repository password", true)
-		if err != nil {
-			return err
-		}
-		if !generate {
-			return fmt.Errorf("setup requires a KOPIA_PASSWORD")
-		}
-		passwordBytes := make([]byte, 32)
-		if _, err := rand.Read(passwordBytes); err != nil {
-			return fmt.Errorf("generate password: %w", err)
-		}
-		kopiaPassword = base64.StdEncoding.EncodeToString(passwordBytes)
-		fmt.Println("Generated a new KOPIA_PASSWORD. Keep it safe.")
-	}
-
 	var repoPath, s3Bucket, s3Endpoint, s3Prefix, awsKeyID, awsSecret string
 	s3PrefixCleared := false
 	objectLock := objectLockSettings{}
@@ -129,7 +112,7 @@ func (a *SetupApp) Run() error {
 		if err != nil {
 			return err
 		}
-		s3Prefix, err = a.promptOptional("S3 prefix (optional, subpath inside bucket; enter - to clear)", existing["KOPIA_S3_PREFIX"], false)
+		s3Prefix, err = a.promptOptional("S3 prefix (optional, subpath inside bucket; enter / to clear)", existing["KOPIA_S3_PREFIX"], false)
 		if err != nil {
 			return err
 		}
@@ -154,6 +137,22 @@ func (a *SetupApp) Run() error {
 		return err
 	}
 	mbsyncConfigPath := defaultMbsyncConfigPath
+
+	fmt.Println()
+	fmt.Println("Kopia repository:")
+	fmt.Println("  [1] Create new repository")
+	fmt.Println("  [2] Connect to existing repository")
+	fmt.Println("  [3] Skip")
+	fmt.Println()
+	repoAction, err := a.prompt("Select", "1", false)
+	if err != nil {
+		return err
+	}
+
+	kopiaPassword, err := a.resolveKopiaPassword(existing["KOPIA_PASSWORD"], repoAction)
+	if err != nil {
+		return err
+	}
 
 	for _, dir := range []string{maildirPath, stateDir, filepath.Dir(kopiaConfigPath), filepath.Dir(mbsyncConfigPath)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -225,17 +224,6 @@ func (a *SetupApp) Run() error {
 		return err
 	}
 	fmt.Printf("Wrote %s\n", a.EnvPath)
-
-	fmt.Println()
-	fmt.Println("Kopia repository:")
-	fmt.Println("  [1] Create new repository")
-	fmt.Println("  [2] Connect to existing repository")
-	fmt.Println("  [3] Skip")
-	fmt.Println()
-	repoAction, err := a.prompt("Select", "1", false)
-	if err != nil {
-		return err
-	}
 
 	if repoType == "s3" && repoAction == "1" {
 		defaultObjectLock := existing["KOPIA_S3_OBJECT_LOCK_MODE"] != ""
@@ -345,7 +333,7 @@ func (a *SetupApp) Run() error {
 	if objectLock.Enabled {
 		fmt.Println("Object Lock note: no extra manual step. Regular backup runs will trigger Kopia maintenance to extend locks before they expire.")
 	}
-	fmt.Println("Run `go run ./cmd/mail-backup backup` or `make backup` to start backing up.")
+	fmt.Println("Run `mail-backup backup` to start backing up.")
 	return nil
 }
 
@@ -470,10 +458,68 @@ func (a *SetupApp) promptOptional(label, defaultValue string, mask bool) (string
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(value) == "-" {
+	if strings.TrimSpace(value) == "/" {
 		return "", nil
 	}
 	return value, nil
+}
+
+func (a *SetupApp) resolveKopiaPassword(existingPassword, repoAction string) (string, error) {
+	existingPassword = strings.TrimSpace(existingPassword)
+	switch repoAction {
+	case "1":
+		if existingPassword != "" {
+			return existingPassword, nil
+		}
+		generate, err := a.promptYesNo("Generate a new Kopia repository password", true)
+		if err != nil {
+			return "", err
+		}
+		if !generate {
+			password, err := a.prompt("Kopia repository password", "", true)
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(password) == "" {
+				return "", fmt.Errorf("setup requires a KOPIA_PASSWORD")
+			}
+			return password, nil
+		}
+		passwordBytes := make([]byte, 32)
+		if _, err := rand.Read(passwordBytes); err != nil {
+			return "", fmt.Errorf("generate password: %w", err)
+		}
+		password := base64.StdEncoding.EncodeToString(passwordBytes)
+		fmt.Println(renderGeneratedKopiaPasswordNotice(password))
+		return password, nil
+	case "2":
+		promptDefault := ""
+		if existingPassword != "" {
+			promptDefault = existingPassword
+		}
+		password, err := a.prompt("Kopia repository password for the existing repository", promptDefault, true)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(password) == "" {
+			return "", fmt.Errorf("setup requires the existing KOPIA_PASSWORD to connect to the repository")
+		}
+		return password, nil
+	case "3":
+		if existingPassword != "" {
+			return existingPassword, nil
+		}
+		password, err := a.promptOptional("Kopia repository password (optional while skipping repository setup; enter - to leave unset)", "", true)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(password), nil
+	default:
+		if existingPassword != "" {
+			return existingPassword, nil
+		}
+		return "", fmt.Errorf("invalid repository action: %s", repoAction)
+	}
 }
 
 func (a *SetupApp) promptYesNo(label string, defaultValue bool) (bool, error) {
@@ -533,6 +579,21 @@ func normalizeS3Prefix(value string) string {
 		value += "/"
 	}
 	return value
+}
+
+func renderGeneratedKopiaPasswordNotice(password string) string {
+	return strings.Join([]string{
+		"",
+		"============================================================",
+		"IMPORTANT: GENERATED KOPIA PASSWORD",
+		"",
+		"If you lose this password, your backups are effectively useless.",
+		"Save it somewhere safe before continuing.",
+		"",
+		"KOPIA_PASSWORD=" + password,
+		"============================================================",
+		"",
+	}, "\n")
 }
 
 func writeEnvFile(path string, values map[string]string) error {

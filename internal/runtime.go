@@ -1,13 +1,16 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -174,17 +177,72 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 	if len(stdinData) > 0 && stdinData[0] != "" {
 		cmd.Stdin = strings.NewReader(stdinData[0])
 	}
-	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		r.LogFileRaw(string(output))
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("capture command stdout %s: %w", strings.Join(command, " "), err)
 	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("capture command stderr %s: %w", strings.Join(command, " "), err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start command %s: %w", strings.Join(command, " "), err)
+	}
+
+	var (
+		output bytes.Buffer
+		mu     sync.Mutex
+		wg     sync.WaitGroup
+	)
+	copyOutput := func(pipe io.ReadCloser) {
+		defer wg.Done()
+		data, readErr := io.ReadAll(pipe)
+		if len(data) > 0 {
+			mu.Lock()
+			_, _ = output.Write(data)
+			mu.Unlock()
+			r.LogFileRaw(string(data))
+		}
+		if readErr != nil {
+			r.LogFile("WARN", fmt.Sprintf("Read command output failed for %s: %v", strings.Join(command, " "), readErr))
+		}
+	}
+	wg.Add(2)
+	go copyOutput(stdoutPipe)
+	go copyOutput(stderrPipe)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	startedAt := time.Now()
+	for {
+		select {
+		case err = <-done:
+			wg.Wait()
+			goto finished
+		case <-ticker.C:
+			elapsed := time.Since(startedAt).Round(time.Second)
+			message := fmt.Sprintf("Still running: %s (%s elapsed)", strings.Join(command, " "), elapsed)
+			r.Console(message)
+			r.LogFile("INFO", message)
+		}
+	}
+
+finished:
+	outputText := output.String()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return string(output), fmt.Errorf("command failed with exit code %d: %s", exitErr.ExitCode(), strings.Join(command, " "))
+			return outputText, fmt.Errorf("command failed with exit code %d: %s", exitErr.ExitCode(), strings.Join(command, " "))
 		}
-		return string(output), fmt.Errorf("run command %s: %w", strings.Join(command, " "), err)
+		return outputText, fmt.Errorf("run command %s: %w", strings.Join(command, " "), err)
 	}
-	return string(output), nil
+	return outputText, nil
 }
 
 func (r *Runtime) SendAlert(status, subject, body string) {

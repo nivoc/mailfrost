@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -249,5 +250,49 @@ func TestNormalizeRecoveryMaildirTimesUsesMessageDate(t *testing.T) {
 	want := "2026-03-31T12:00:00Z"
 	if got != want {
 		t.Fatalf("mtime = %s, want %s", got, want)
+	}
+}
+
+func TestIsRecoverStoreRetryable(t *testing.T) {
+	for _, errText := range []string{
+		"write: broken pipe",
+		"read tcp: connection reset by peer",
+		"unexpected EOF",
+		"use of closed network connection",
+	} {
+		if !isRecoverStoreRetryable(fmt.Errorf("%s", errText)) {
+			t.Fatalf("expected %q to be retryable", errText)
+		}
+	}
+	if isRecoverStoreRetryable(fmt.Errorf("invalid credentials")) {
+		t.Fatalf("did not expect unrelated IMAP error to be retryable")
+	}
+}
+
+func TestFindLatestRecoveryStagingReturnsNewestMatchingSnapshot(t *testing.T) {
+	root := t.TempDir()
+	older := filepath.Join(root, "snapshot-abcdef1234-older")
+	newer := filepath.Join(root, "snapshot-abcdef1234-newer")
+	other := filepath.Join(root, "snapshot-ffffffffff-other")
+	for _, path := range []string{older, newer, other} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", path, err)
+		}
+	}
+	oldTime := time.Unix(100, 0)
+	newTime := time.Unix(200, 0)
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes(%s): %v", older, err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
+		t.Fatalf("Chtimes(%s): %v", newer, err)
+	}
+
+	got, err := findLatestRecoveryStaging(root, "abcdef1234")
+	if err != nil {
+		t.Fatalf("findLatestRecoveryStaging() error = %v", err)
+	}
+	if got != newer {
+		t.Fatalf("findLatestRecoveryStaging() = %s, want %s", got, newer)
 	}
 }

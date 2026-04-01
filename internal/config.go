@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -158,6 +159,31 @@ func LoadSetupConfig(envPath string) (map[string]string, error) {
 		return nil, err
 	}
 	return values, nil
+}
+
+func normalizedAccountTag(username string) string {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if username == "" {
+		return "unknown-account"
+	}
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range username {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	value := strings.Trim(builder.String(), "-")
+	if value == "" {
+		return "unknown-account"
+	}
+	return value
 }
 
 func (c Config) Validate() error {
