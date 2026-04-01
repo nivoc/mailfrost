@@ -193,6 +193,49 @@ func TestSetupPromptOptionalAllowsClearingExistingValue(t *testing.T) {
 	}
 }
 
+func TestBuildKopiaCompressionPolicyCommandUsesZstd(t *testing.T) {
+	app := &SetupApp{}
+	got := app.buildKopiaCompressionPolicyCommand("/tmp/repository.config", "secret", "/tmp/maildir")
+	want := []string{
+		"kopia", "policy", "set",
+		"--config-file", "/tmp/repository.config",
+		"--password", "secret",
+		"/tmp/maildir",
+		"--compression", "zstd",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("buildKopiaCompressionPolicyCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestSetupPromptOptionalClearDoesNotReintroduceExistingS3Prefix(t *testing.T) {
+	existing := map[string]string{
+		"KOPIA_S3_PREFIX": "old-prefix/",
+		"IMAP_HOST":       "imap.example.com",
+	}
+	values := map[string]string{
+		"KOPIA_REPO_TYPE": "s3",
+	}
+	s3PrefixCleared := true
+
+	for key, value := range existing {
+		if _, ok := values[key]; ok {
+			continue
+		}
+		if key == "KOPIA_S3_PREFIX" && s3PrefixCleared {
+			continue
+		}
+		values[key] = value
+	}
+
+	if _, ok := values["KOPIA_S3_PREFIX"]; ok {
+		t.Fatalf("values unexpectedly contains KOPIA_S3_PREFIX after explicit clear")
+	}
+	if values["IMAP_HOST"] != "imap.example.com" {
+		t.Fatalf("other existing values should still be preserved")
+	}
+}
+
 func manifestRecord(key string, messageTS, firstSeenTS, occurrences int, mailboxes, hashes []string) ManifestRecord {
 	messageID := "<msg@example.com>"
 	return ManifestRecord{

@@ -112,6 +112,7 @@ func (a *SetupApp) Run() error {
 	}
 
 	var repoPath, s3Bucket, s3Endpoint, s3Prefix, awsKeyID, awsSecret string
+	s3PrefixCleared := false
 	objectLock := objectLockSettings{}
 	switch repoType {
 	case "filesystem":
@@ -132,6 +133,7 @@ func (a *SetupApp) Run() error {
 		if err != nil {
 			return err
 		}
+		s3PrefixCleared = strings.TrimSpace(s3Prefix) == ""
 		s3Prefix = normalizeS3Prefix(s3Prefix)
 		awsKeyID, err = a.prompt("AWS access key ID", existing["AWS_ACCESS_KEY_ID"], false)
 		if err != nil {
@@ -207,6 +209,9 @@ func (a *SetupApp) Run() error {
 				case "KOPIA_S3_BUCKET", "KOPIA_S3_ENDPOINT", "KOPIA_S3_PREFIX", "KOPIA_S3_OBJECT_LOCK_MODE", "KOPIA_S3_OBJECT_LOCK_DAYS":
 					continue
 				}
+			}
+			if repoType == "s3" && key == "KOPIA_S3_PREFIX" && s3PrefixCleared {
+				continue
 			}
 			values[key] = value
 		}
@@ -317,6 +322,13 @@ func (a *SetupApp) Run() error {
 			return fmt.Errorf("kopia repository %s failed: %w", action, cmdErr)
 		}
 		fmt.Printf("Kopia repository %sed.\n", action)
+		compressionCmd := a.buildKopiaCompressionPolicyCommand(kopiaConfigPath, kopiaPassword, maildirPath)
+		output, cmdErr = runCommandWithEnv(compressionCmd, env)
+		if cmdErr != nil {
+			fmt.Printf("Kopia compression policy output:\n%s\n", output)
+			return fmt.Errorf("kopia compression policy setup failed: %w", cmdErr)
+		}
+		fmt.Println("Set Kopia compression policy for the Maildir to zstd.")
 		if action == "create" && objectLock.Enabled {
 			maintenanceCmd := a.buildKopiaMaintenanceSetCommand(kopiaConfigPath, kopiaPassword, objectLock.RetentionDays)
 			output, cmdErr := runCommandWithEnv(maintenanceCmd, env)
@@ -419,6 +431,16 @@ func (a *SetupApp) buildKopiaMaintenanceSetCommand(configPath, password string, 
 		"--password", password,
 		"--extend-object-locks", "true",
 		"--full-interval", fullMaintenanceIntervalForObjectLock(retentionDays),
+	}
+}
+
+func (a *SetupApp) buildKopiaCompressionPolicyCommand(configPath, password, targetPath string) []string {
+	return []string{
+		"kopia", "policy", "set",
+		"--config-file", configPath,
+		"--password", password,
+		targetPath,
+		"--compression", "zstd",
 	}
 }
 
