@@ -108,7 +108,7 @@ func versionString() string {
 }
 
 func printVersionBanner() {
-	fmt.Println(colorHeader() + versionString() + colorReset)
+	fmt.Println(colorVersion() + versionString() + colorReset)
 	if info, ok := checkLatestRelease(); ok {
 		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, info.TagName, version)
 		if info.HTMLURL != "" {
@@ -216,6 +216,10 @@ func colorCommand() string {
 }
 
 func colorWarning() string {
+	return colorBold + colorYellow
+}
+
+func colorVersion() string {
 	return colorBold + colorYellow
 }
 
