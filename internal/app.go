@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+const (
+	ansiReset  = "\033[0m"
+	ansiBold   = "\033[1m"
+	ansiRed    = "\033[31m"
+	ansiYellow = "\033[33m"
+	ansiGreen  = "\033[32m"
+)
+
 type App struct {
 	Config  Config
 	Runtime *Runtime
@@ -39,6 +47,7 @@ func (a *App) RunBackup() (int, error) {
 	}
 	a.Runtime.Console(defaultToolName + ": sync done")
 
+	a.Runtime.Console(defaultToolName + ": audit start (scanning and hashing Maildir)")
 	currentManifest, err := BuildManifest(a.Config.MaildirPath, a.Config.IgnoreMailboxRegex, time.Now())
 	if err != nil {
 		return 0, err
@@ -49,6 +58,7 @@ func (a *App) RunBackup() (int, error) {
 
 	var report AuditReport
 	if _, err := os.Stat(a.baselineManifestPath()); err == nil {
+		a.Runtime.Console(defaultToolName + ": audit compare against baseline")
 		a.Runtime.LogFile("INFO", "Comparing current Maildir state against baseline")
 		baselineManifest, err := LoadManifest(a.baselineManifestPath())
 		if err != nil {
@@ -56,6 +66,7 @@ func (a *App) RunBackup() (int, error) {
 		}
 		report = CompareManifests(baselineManifest, currentManifest, a.Config.ImmutabilityDays, a.Config.ReportSampleLimit, time.Now())
 	} else {
+		a.Runtime.Console(defaultToolName + ": audit baseline init")
 		a.Runtime.LogFile("INFO", "No baseline found, this run will initialize it after a successful backup")
 		report = BaselineInitReport(a.Config.ImmutabilityDays, currentManifest.Stats.UniqueMessages)
 	}
@@ -67,6 +78,7 @@ func (a *App) RunBackup() (int, error) {
 	if err := WriteText(reportTextPath, reportText); err != nil {
 		return 0, fmt.Errorf("write report text: %w", err)
 	}
+	a.Runtime.Console(defaultToolName + ": audit done")
 	a.printAuditSummary(report)
 
 	a.Runtime.Console(defaultToolName + ": kopia backup start")
@@ -176,24 +188,8 @@ func (a *App) reportTextPath() string {
 }
 
 func (a *App) printAuditSummary(report AuditReport) {
-	a.Runtime.ConsoleRaw("\nAUDIT\n")
-	a.Runtime.ConsoleRaw(fmt.Sprintf("status: %s\n", strings.ToUpper(report.Summary.Status)))
-	a.Runtime.ConsoleRaw(fmt.Sprintf("scope: monitoring messages older than %d days\n", report.Summary.ImmutabilityDays))
-	a.Runtime.ConsoleRaw(
-		fmt.Sprintf(
-			"messages: baseline=%d current=%d\n",
-			report.Summary.BaselineUniqueMessages,
-			report.Summary.CurrentUniqueMessages,
-		),
-	)
-	a.Runtime.ConsoleRaw(
-		fmt.Sprintf(
-			"findings: missing=%d mutated=%d moved_or_copy_loss=%d\n",
-			report.Summary.MissingStableCount,
-			report.Summary.MutatedStableCount,
-			report.Summary.PlacementChangedStableCount,
-		),
-	)
+	a.Runtime.ConsoleRaw("\n")
+	a.Runtime.ConsoleRaw(renderAuditSummaryBox(report))
 
 	if strings.EqualFold(report.Summary.Status, "alert") {
 		topFinding := firstTopFinding(report)
@@ -203,6 +199,102 @@ func (a *App) printAuditSummary(report AuditReport) {
 		}
 	}
 	a.Runtime.ConsoleRaw("\n")
+}
+
+func renderAuditSummaryBox(report AuditReport) string {
+	const (
+		labelWidth = 10
+		valueWidth = 25
+	)
+	newMessages := report.Summary.CurrentUniqueMessages - report.Summary.BaselineUniqueMessages
+	if newMessages < 0 {
+		newMessages = 0
+	}
+
+	statusPlain := auditStatusLabel(report.Summary.Status)
+	statusDisplay := auditColorizeStatus(statusPlain, report.Summary.Status)
+	missingPlain := fmt.Sprintf("%d", report.Summary.MissingStableCount)
+	mutatedPlain := fmt.Sprintf("%d", report.Summary.MutatedStableCount)
+	movedPlain := fmt.Sprintf("%d", report.Summary.PlacementChangedStableCount)
+
+	lines := []string{
+		"+---------------- AUDIT ----------------+",
+		auditBoxRow(labelWidth, valueWidth, "Status", statusPlain, statusDisplay),
+		auditBoxRow(labelWidth, valueWidth, "Window", fmt.Sprintf("older than %d days", report.Summary.ImmutabilityDays), ""),
+		auditBoxRow(labelWidth, valueWidth, "Indexed", fmt.Sprintf("%s mails", formatCount(report.Summary.CurrentUniqueMessages)), ""),
+		auditBoxRow(labelWidth, valueWidth, "New", formatCount(newMessages), ""),
+		auditBoxRow(labelWidth, valueWidth, "Missing", missingPlain, auditColorizeCount(missingPlain, report.Summary.MissingStableCount)),
+		auditBoxRow(labelWidth, valueWidth, "Mutated", mutatedPlain, auditColorizeCount(mutatedPlain, report.Summary.MutatedStableCount)),
+		auditBoxRow(labelWidth, valueWidth, "Moved/Lost", movedPlain, auditColorizeCount(movedPlain, report.Summary.PlacementChangedStableCount)),
+		"+---------------------------------------+",
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func auditBoxRow(labelWidth, valueWidth int, label, plainValue, styledValue string) string {
+	paddedValue := fmt.Sprintf("%-*s", valueWidth, plainValue)
+	if styledValue != "" && styledValue != plainValue {
+		paddedValue = strings.Replace(paddedValue, plainValue, styledValue, 1)
+	}
+	return fmt.Sprintf("| %-*s %s |", labelWidth, label, paddedValue)
+}
+
+func auditStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "baseline-init":
+		return "BASELINE INIT"
+	case "alert":
+		return "ALERT"
+	default:
+		return "OK"
+	}
+}
+
+func auditColorizeStatus(value, status string) string {
+	if !supportsANSIColor() {
+		return value
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "baseline-init":
+		return ansiBold + ansiYellow + value + ansiReset
+	case "alert":
+		return ansiBold + ansiRed + value + ansiReset
+	default:
+		return ansiBold + ansiGreen + value + ansiReset
+	}
+}
+
+func auditColorizeCount(value string, count int) string {
+	if count == 0 || !supportsANSIColor() {
+		return value
+	}
+	return ansiBold + ansiRed + value + ansiReset
+}
+
+func supportsANSIColor() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	if (info.Mode() & os.ModeCharDevice) == 0 {
+		return false
+	}
+	term := strings.TrimSpace(os.Getenv("TERM"))
+	return term != "" && term != "dumb"
+}
+
+func formatCount(value int) string {
+	text := fmt.Sprintf("%d", value)
+	if len(text) <= 3 {
+		return text
+	}
+	var parts []string
+	for len(text) > 3 {
+		parts = append([]string{text[len(text)-3:]}, parts...)
+		text = text[:len(text)-3]
+	}
+	parts = append([]string{text}, parts...)
+	return strings.Join(parts, ",")
 }
 
 func (a *App) printFinalStatus(status, detail string, exitCode int) {
@@ -241,24 +333,38 @@ func (a *App) ensureGeneratedMbsyncConfig() error {
 func (a *App) kopiaBaseArgs() []string {
 	return []string{
 		"--config-file", a.Config.KopiaConfigPath,
-		"--password", a.Config.KopiaPassword,
 		"--no-progress",
 	}
 }
 
-func (a *App) runKopiaSnapshotPath(path string, extraArgs []string) (string, string, error) {
+func (a *App) kopiaSnapshotBaseArgs() []string {
+	return []string{
+		"--config-file", a.Config.KopiaConfigPath,
+	}
+}
+
+func (a *App) kopiaCommandEnv() map[string]string {
+	return map[string]string{
+		"KOPIA_PASSWORD": a.Config.KopiaPassword,
+	}
+}
+
+func (a *App) buildKopiaSnapshotCreateCommand(path string, extraArgs []string) []string {
 	command := append([]string{}, a.Config.KopiaCommand...)
 	command = append(command, "snapshot", "create")
-	command = append(command, a.kopiaBaseArgs()...)
+	command = append(command, a.kopiaSnapshotBaseArgs()...)
 	command = append(command, "--json")
 	command = append(command, extraArgs...)
 	if path == a.Config.MaildirPath {
-		command = append(command, "--tags", legacyKopiaPurposeTag)
 		command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
 	}
 	command = append(command, path)
+	return command
+}
 
-	output, err := a.Runtime.RunCommand(command, nil)
+func (a *App) runKopiaSnapshotPath(path string, extraArgs []string) (string, string, error) {
+	command := a.buildKopiaSnapshotCreateCommand(path, extraArgs)
+	output, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv())
 	if err != nil {
 		return "", "", err
 	}
@@ -277,7 +383,7 @@ func (a *App) maybeRunKopiaMaintenance() error {
 	command := append([]string{}, a.Config.KopiaCommand...)
 	command = append(command, "maintenance", "run", "--full")
 	command = append(command, a.kopiaBaseArgs()...)
-	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
+	if _, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv()); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(a.Runtime.Paths.KopiaMaintenanceStamp, os.O_CREATE|os.O_WRONLY, 0o644)
@@ -400,7 +506,7 @@ func (a *App) kopiaCompressionSummary() string {
 	command = append(command, "policy", "show")
 	command = append(command, a.kopiaBaseArgs()...)
 	command = append(command, a.Config.MaildirPath)
-	output, err := a.Runtime.RunCommand(command, nil)
+	output, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv())
 	if err != nil {
 		a.Runtime.LogFile("WARN", fmt.Sprintf("Kopia policy show failed while building repo summary: %s", err))
 		return "unknown"

@@ -170,7 +170,7 @@ func (r *Runtime) CommandEnv(extra map[string]string) []string {
 }
 
 func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdinData ...string) (string, error) {
-	displayCommand := append([]string(nil), command...)
+	displayCommand := sanitizeCommandForDisplay(command)
 	command = wrapCommandForTTY(command)
 	r.LogFile("INFO", fmt.Sprintf("Running command: %s", strings.Join(displayCommand, " ")))
 
@@ -199,8 +199,10 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 		mu     sync.Mutex
 		wg     sync.WaitGroup
 	)
-	mirrorToConsole := shouldMirrorCommandOutput(command)
-	mbsyncFilter := newMbsyncConsoleFilter(command)
+	statusWidth := 0
+	statusOpen := false
+	consoleFilter := newConsoleMirrorFilter(command)
+	mirrorToConsole := consoleFilter != nil
 	copyOutput := func(pipe io.ReadCloser) {
 		defer wg.Done()
 		buffer := make([]byte, 32*1024)
@@ -214,18 +216,14 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 				mu.Unlock()
 				r.LogFileRaw(chunk)
 				if mirrorToConsole {
-					if mbsyncFilter != nil {
-						pending = mbsyncFilter.consume(r, pending, chunk)
-					} else {
-						r.ConsoleRaw(chunk)
-					}
+					pending = consoleFilter.consume(r, pending, chunk)
 				}
 			}
 			if readErr == nil {
 				continue
 			}
-			if mirrorToConsole && mbsyncFilter != nil && strings.TrimSpace(pending) != "" {
-				mbsyncFilter.emitRaw(r, pending)
+			if mirrorToConsole {
+				consoleFilter.finish(r, pending)
 			}
 			if readErr == io.EOF {
 				return
@@ -246,6 +244,9 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	startedAt := time.Now()
+	if !mirrorToConsole {
+		r.Console(fmt.Sprintf("Running command: %s", strings.Join(displayCommand, " ")))
+	}
 	for {
 		select {
 		case err = <-done:
@@ -257,12 +258,18 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 			}
 			elapsed := time.Since(startedAt).Round(time.Second)
 			message := fmt.Sprintf("Still running: %s (%s elapsed)", strings.Join(displayCommand, " "), elapsed)
-			r.Console(message)
+			rendered := fmt.Sprintf("%s Still running... (%s elapsed)", consoleTimestamp(), elapsed)
+			r.ConsoleRaw(renderTransientStatus(rendered, statusWidth))
+			statusWidth = max(statusWidth, len(rendered))
+			statusOpen = true
 			r.LogFile("INFO", message)
 		}
 	}
 
 finished:
+	if statusOpen {
+		r.ConsoleRaw("\n")
+	}
 	outputText := output.String()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -273,15 +280,41 @@ finished:
 	return outputText, nil
 }
 
-func shouldMirrorCommandOutput(command []string) bool {
-	if len(command) == 0 {
-		return false
+func renderTransientStatus(rendered string, priorWidth int) string {
+	padding := ""
+	if priorWidth > len(rendered) {
+		padding = strings.Repeat(" ", priorWidth-len(rendered))
 	}
-	base := filepath.Base(command[0])
-	if base == "script" && len(command) >= 4 {
-		return filepath.Base(command[3]) == "mbsync"
+	return "\r" + rendered + padding
+}
+
+func sanitizeCommandForDisplay(command []string) []string {
+	sanitized := append([]string(nil), command...)
+	for i := 0; i < len(sanitized); i++ {
+		part := sanitized[i]
+		switch {
+		case part == "--password":
+			if i+1 < len(sanitized) {
+				sanitized[i+1] = "<redacted>"
+				i++
+			}
+		case strings.HasPrefix(part, "--password="):
+			sanitized[i] = "--password=<redacted>"
+		}
 	}
-	return base == "mbsync"
+	return sanitized
+}
+
+type consoleMirrorFilter interface {
+	consume(runtime *Runtime, pending, chunk string) string
+	finish(runtime *Runtime, pending string)
+}
+
+func newConsoleMirrorFilter(command []string) consoleMirrorFilter {
+	if filter := newMbsyncConsoleFilter(command); filter != nil {
+		return filter
+	}
+	return newKopiaSnapshotConsoleFilter(command)
 }
 
 func wrapCommandForTTY(command []string) []string {
@@ -300,6 +333,8 @@ func wrapCommandForTTY(command []string) []string {
 type mbsyncConsoleFilter struct {
 	mode          string
 	lastFormatted string
+	progressWidth int
+	progressOpen  bool
 }
 
 func newMbsyncConsoleFilter(command []string) *mbsyncConsoleFilter {
@@ -331,16 +366,29 @@ func (f *mbsyncConsoleFilter) consume(runtime *Runtime, pending, chunk string) s
 	}
 }
 
+func (f *mbsyncConsoleFilter) finish(runtime *Runtime, pending string) {
+	if strings.TrimSpace(pending) != "" {
+		f.emit(runtime, pending)
+	}
+	f.finishProgress(runtime)
+}
+
 func (f *mbsyncConsoleFilter) emit(runtime *Runtime, line string) {
 	if formatted, ok := formatMbsyncProgressLineForMode(line, f.mode); ok {
 		if formatted == f.lastFormatted {
 			return
 		}
 		f.lastFormatted = formatted
-		runtime.Console(formatted)
+		if strings.HasPrefix(formatted, "Summary |") {
+			f.finishProgress(runtime)
+			runtime.Console(formatted)
+			return
+		}
+		f.renderProgress(runtime, formatted)
 		return
 	}
 	f.lastFormatted = ""
+	f.finishProgress(runtime)
 	f.emitRaw(runtime, line)
 }
 
@@ -352,10 +400,122 @@ func (f *mbsyncConsoleFilter) emitRaw(runtime *Runtime, line string) {
 	runtime.ConsoleRaw(trimmed + "\n")
 }
 
-var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+func (f *mbsyncConsoleFilter) renderProgress(runtime *Runtime, formatted string) {
+	rendered := fmt.Sprintf("%s %s", consoleTimestamp(), formatted)
+	padding := ""
+	if f.progressWidth > len(rendered) {
+		padding = strings.Repeat(" ", f.progressWidth-len(rendered))
+	}
+	runtime.ConsoleRaw("\r" + rendered + padding)
+	f.progressWidth = max(f.progressWidth, len(rendered))
+	f.progressOpen = true
+}
+
+func (f *mbsyncConsoleFilter) finishProgress(runtime *Runtime) {
+	if !f.progressOpen {
+		return
+	}
+	runtime.ConsoleRaw("\n")
+	f.progressOpen = false
+	f.progressWidth = 0
+}
+
+type kopiaSnapshotConsoleFilter struct {
+	progressWidth int
+	progressOpen  bool
+}
+
+func newKopiaSnapshotConsoleFilter(command []string) *kopiaSnapshotConsoleFilter {
+	if len(command) < 3 {
+		return nil
+	}
+	if filepath.Base(command[0]) != "kopia" {
+		return nil
+	}
+	if command[1] != "snapshot" || command[2] != "create" {
+		return nil
+	}
+	return &kopiaSnapshotConsoleFilter{}
+}
+
+func (f *kopiaSnapshotConsoleFilter) consume(runtime *Runtime, pending, chunk string) string {
+	combined := pending + chunk
+	for {
+		split := strings.IndexAny(combined, "\r\n")
+		if split < 0 {
+			return combined
+		}
+		line := combined[:split]
+		if strings.TrimSpace(line) != "" {
+			f.emit(runtime, line)
+		}
+		combined = combined[split+1:]
+	}
+}
+
+func (f *kopiaSnapshotConsoleFilter) finish(runtime *Runtime, pending string) {
+	if strings.TrimSpace(pending) != "" {
+		f.emit(runtime, pending)
+	}
+	f.finishProgress(runtime)
+}
+
+func (f *kopiaSnapshotConsoleFilter) emit(runtime *Runtime, line string) {
+	trimmed := strings.TrimSpace(stripANSI(line))
+	if trimmed == "" {
+		return
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		return
+	}
+	if strings.HasPrefix(trimmed, "Snapshotting ") || strings.Contains(trimmed, " hashing,") {
+		f.renderProgress(runtime, trimmed)
+		return
+	}
+	f.finishProgress(runtime)
+	runtime.ConsoleRaw(trimmed + "\n")
+}
+
+func (f *kopiaSnapshotConsoleFilter) renderProgress(runtime *Runtime, line string) {
+	padding := ""
+	if f.progressWidth > len(line) {
+		padding = strings.Repeat(" ", f.progressWidth-len(line))
+	}
+	runtime.ConsoleRaw("\r" + line + padding)
+	f.progressWidth = max(f.progressWidth, len(line))
+	f.progressOpen = true
+}
+
+func (f *kopiaSnapshotConsoleFilter) finishProgress(runtime *Runtime) {
+	if !f.progressOpen {
+		return
+	}
+	runtime.ConsoleRaw("\n")
+	f.progressOpen = false
+	f.progressWidth = 0
+}
+
+var (
+	ansiEscapePattern   = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+)
 
 func stripANSI(value string) string {
-	return ansiEscapePattern.ReplaceAllString(value, "")
+	value = ansiEscapePattern.ReplaceAllString(value, "")
+	runes := make([]rune, 0, len(value))
+	for _, r := range value {
+		switch r {
+		case '\b', 0x7f:
+			if len(runes) > 0 {
+				runes = runes[:len(runes)-1]
+			}
+		default:
+			if r < 0x20 {
+				continue
+			}
+			runes = append(runes, r)
+		}
+	}
+	return string(runes)
 }
 
 func formatMbsyncProgressLineForMode(line, mode string) (string, bool) {

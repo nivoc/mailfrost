@@ -195,16 +195,96 @@ func TestSetupPromptOptionalAllowsClearingExistingValue(t *testing.T) {
 
 func TestBuildKopiaCompressionPolicyCommandUsesZstd(t *testing.T) {
 	app := &SetupApp{}
-	got := app.buildKopiaCompressionPolicyCommand("/tmp/repository.config", "secret", "/tmp/maildir")
+	got := app.buildKopiaCompressionPolicyCommand("/tmp/repository.config", "/tmp/maildir")
 	want := []string{
 		"kopia", "policy", "set",
 		"--config-file", "/tmp/repository.config",
-		"--password", "secret",
 		"/tmp/maildir",
 		"--compression", "zstd",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("buildKopiaCompressionPolicyCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildKopiaSnapshotCreateCommandUsesSinglePurposeTagAndAccountTag(t *testing.T) {
+	app := &App{
+		Config: Config{
+			KopiaCommand:      []string{"kopia"},
+			KopiaConfigPath:   "/tmp/repository.config",
+			KopiaPassword:     "secret",
+			MaildirPath:       "/tmp/maildir",
+			KopiaSnapshotArgs: []string{"--tags", currentKopiaPurposeTag},
+			Env: map[string]string{
+				"IMAP_USERNAME": "Example+Inbox@example.com",
+			},
+		},
+	}
+
+	got := app.buildKopiaSnapshotCreateCommand(app.Config.MaildirPath, app.Config.KopiaSnapshotArgs)
+	want := []string{
+		"kopia", "snapshot", "create",
+		"--config-file", "/tmp/repository.config",
+		"--json",
+		"--tags", currentKopiaPurposeTag,
+		"--tags", "account:example-inbox-example-com",
+		"/tmp/maildir",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("buildKopiaSnapshotCreateCommand() = %v, want %v", got, want)
+	}
+}
+
+func TestSanitizeCommandForDisplayRedactsPasswordFlags(t *testing.T) {
+	got := sanitizeCommandForDisplay([]string{
+		"kopia", "snapshot", "create",
+		"--password", "secret-value",
+		"--config-file", "/tmp/repository.config",
+		"--password=another-secret",
+	})
+	want := []string{
+		"kopia", "snapshot", "create",
+		"--password", "<redacted>",
+		"--config-file", "/tmp/repository.config",
+		"--password=<redacted>",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("sanitizeCommandForDisplay() = %v, want %v", got, want)
+	}
+}
+
+func TestStripANSIRemovesControlCharacters(t *testing.T) {
+	got := stripANSI("^D\b\bMailbox 3/47 \x1b[31mremote\x1b[0m")
+	want := "Mailbox 3/47 remote"
+	if got != want {
+		t.Fatalf("stripANSI() = %q, want %q", got, want)
+	}
+}
+
+func TestRenderAuditSummaryBoxBaselineInit(t *testing.T) {
+	report := AuditReport{
+		Summary: ReportSummary{
+			Status:                "baseline-init",
+			ImmutabilityDays:      30,
+			BaselineUniqueMessages: 0,
+			CurrentUniqueMessages:  60719,
+		},
+	}
+	got := renderAuditSummaryBox(report)
+	for _, needle := range []string{
+		"+---------------- AUDIT ----------------+",
+		"| Status     BASELINE INIT",
+		"| Window     older than 30 days",
+		"| Indexed    60,719 mails",
+		"| New        60,719",
+		"| Missing    0",
+		"| Mutated    0",
+		"| Moved/Lost 0",
+		"+---------------------------------------+",
+	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("renderAuditSummaryBox() missing %q in:\n%s", needle, got)
+		}
 	}
 }
 

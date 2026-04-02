@@ -16,7 +16,6 @@ const (
 	defaultToolName                 = "mailfrost"
 	defaultRecoverChannelName       = "mailfrost-recover"
 	currentKopiaPurposeTag          = "purpose:mailfrost"
-	legacyKopiaPurposeTag           = "purpose:mail-backup"
 	defaultMaildirPath              = "./data/maildir"
 	defaultStateDir                 = "./data/state"
 	defaultKopiaConfigPath          = "./data/kopia/repository.config"

@@ -307,14 +307,15 @@ func (a *SetupApp) Run() error {
 		if repoAction == "2" {
 			action = "connect"
 		}
-		command := a.buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s3Endpoint, s3Prefix, kopiaConfigPath, kopiaPassword, objectLock)
+		env = append(env, "KOPIA_PASSWORD="+kopiaPassword)
+		command := a.buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s3Endpoint, s3Prefix, kopiaConfigPath, objectLock)
 		output, cmdErr := runCommandWithEnv(command, env)
 		if cmdErr != nil {
 			fmt.Printf("Kopia output:\n%s\n", output)
 			return fmt.Errorf("kopia repository %s failed: %w", action, cmdErr)
 		}
 		fmt.Printf("Kopia repository %sed.\n", action)
-		compressionCmd := a.buildKopiaCompressionPolicyCommand(kopiaConfigPath, kopiaPassword, maildirPath)
+		compressionCmd := a.buildKopiaCompressionPolicyCommand(kopiaConfigPath, maildirPath)
 		output, cmdErr = runCommandWithEnv(compressionCmd, env)
 		if cmdErr != nil {
 			fmt.Printf("Kopia compression policy output:\n%s\n", output)
@@ -322,7 +323,7 @@ func (a *SetupApp) Run() error {
 		}
 		fmt.Println("Set Kopia compression policy for the Maildir to zstd.")
 		if action == "create" && objectLock.Enabled {
-			maintenanceCmd := a.buildKopiaMaintenanceSetCommand(kopiaConfigPath, kopiaPassword, objectLock.RetentionDays)
+			maintenanceCmd := a.buildKopiaMaintenanceSetCommand(kopiaConfigPath, objectLock.RetentionDays)
 			output, cmdErr := runCommandWithEnv(maintenanceCmd, env)
 			if cmdErr != nil {
 				fmt.Printf("Kopia maintenance setup output:\n%s\n", output)
@@ -388,14 +389,13 @@ func writeGeneratedMbsyncConfig(path, host, port, username, maildirPath string) 
 	return nil
 }
 
-func (a *SetupApp) buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s3Endpoint, s3Prefix, configPath, password string, objectLock objectLockSettings) []string {
+func (a *SetupApp) buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s3Endpoint, s3Prefix, configPath string, objectLock objectLockSettings) []string {
 	if repoType == "filesystem" {
 		absRepoPath, _ := filepath.Abs(repoPath)
 		return []string{
 			"kopia", "repository", action, "filesystem",
 			"--path", absRepoPath,
 			"--config-file", configPath,
-			"--password", password,
 			"--no-persist-credentials",
 		}
 	}
@@ -404,7 +404,6 @@ func (a *SetupApp) buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s
 		"--bucket", s3Bucket,
 		"--endpoint", s3Endpoint,
 		"--config-file", configPath,
-		"--password", password,
 		"--no-persist-credentials",
 	}
 	if s3Prefix != "" {
@@ -419,21 +418,19 @@ func (a *SetupApp) buildKopiaRepoCommand(action, repoType, repoPath, s3Bucket, s
 	return command
 }
 
-func (a *SetupApp) buildKopiaMaintenanceSetCommand(configPath, password string, retentionDays int) []string {
+func (a *SetupApp) buildKopiaMaintenanceSetCommand(configPath string, retentionDays int) []string {
 	return []string{
 		"kopia", "maintenance", "set",
 		"--config-file", configPath,
-		"--password", password,
 		"--extend-object-locks", "true",
 		"--full-interval", fullMaintenanceIntervalForObjectLock(retentionDays),
 	}
 }
 
-func (a *SetupApp) buildKopiaCompressionPolicyCommand(configPath, password, targetPath string) []string {
+func (a *SetupApp) buildKopiaCompressionPolicyCommand(configPath, targetPath string) []string {
 	return []string{
 		"kopia", "policy", "set",
 		"--config-file", configPath,
-		"--password", password,
 		targetPath,
 		"--compression", "zstd",
 	}

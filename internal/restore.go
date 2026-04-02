@@ -107,8 +107,13 @@ func (a *RestoreApp) Run() error {
 func (a *RestoreApp) kopiaBaseArgs() []string {
 	return []string{
 		"--config-file", a.Config.KopiaConfigPath,
-		"--password", a.Config.KopiaPassword,
 		"--no-progress",
+	}
+}
+
+func (a *RestoreApp) kopiaCommandEnv() map[string]string {
+	return map[string]string{
+		"KOPIA_PASSWORD": a.Config.KopiaPassword,
 	}
 }
 
@@ -118,30 +123,28 @@ func (a *RestoreApp) listSnapshots(limit int) ([]kopiaSnapshot, error) {
 
 func (a *RestoreApp) listSnapshotsForScope(limit int, scope snapshotScope) ([]kopiaSnapshot, error) {
 	seen := map[string]kopiaSnapshot{}
-	for _, purposeTag := range []string{currentKopiaPurposeTag, legacyKopiaPurposeTag} {
-		command := append([]string{}, a.Config.KopiaCommand...)
-		command = append(command, "snapshot", "list", "--json")
-		command = append(command, a.kopiaBaseArgs()...)
-		command = append(command, "--tags", purposeTag)
-		if scope == snapshotScopeAccount {
-			command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
-		}
-		command = append(command, "-n", strconv.Itoa(limit))
-
-		output, err := a.Runtime.RunCommand(command, nil)
-		if err != nil {
-			return nil, fmt.Errorf("list snapshots: %w", err)
-		}
-
-		var snapshots []kopiaSnapshot
-		if err := json.Unmarshal([]byte(output), &snapshots); err != nil {
-			return nil, fmt.Errorf("parse snapshot list: %w", err)
-		}
-		for _, snapshot := range snapshots {
-			seen[snapshot.ID] = snapshot
-		}
+	command := append([]string{}, a.Config.KopiaCommand...)
+	command = append(command, "snapshot", "list", "--json")
+	command = append(command, a.kopiaBaseArgs()...)
+	command = append(command, "--tags", currentKopiaPurposeTag)
+	if scope == snapshotScopeAccount {
+		command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
 	}
-	snapshots := make([]kopiaSnapshot, 0, len(seen))
+	command = append(command, "-n", strconv.Itoa(limit))
+
+	output, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv())
+	if err != nil {
+		return nil, fmt.Errorf("list snapshots: %w", err)
+	}
+
+	var snapshots []kopiaSnapshot
+	if err := json.Unmarshal([]byte(output), &snapshots); err != nil {
+		return nil, fmt.Errorf("parse snapshot list: %w", err)
+	}
+	for _, snapshot := range snapshots {
+		seen[snapshot.ID] = snapshot
+	}
+	snapshots = make([]kopiaSnapshot, 0, len(seen))
 	for _, snapshot := range seen {
 		snapshots = append(snapshots, snapshot)
 	}
@@ -318,7 +321,7 @@ func (a *RestoreApp) restoreSnapshot(snapshot kopiaSnapshot, target string) erro
 	command = append(command, "snapshot", "restore")
 	command = append(command, a.kopiaBaseArgs()...)
 	command = append(command, snapshot.ID, target)
-	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
+	if _, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv()); err != nil {
 		return fmt.Errorf("restore snapshot: %w", err)
 	}
 	return nil
