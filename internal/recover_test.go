@@ -296,3 +296,47 @@ func TestFindLatestRecoveryStagingReturnsNewestMatchingSnapshot(t *testing.T) {
 		t.Fatalf("findLatestRecoveryStaging() = %s, want %s", got, newer)
 	}
 }
+
+func TestFindRecoveryResumeConfigReturnsNewestConfigWhenRunIDMissing(t *testing.T) {
+	root := t.TempDir()
+	older := filepath.Join(root, "mbsyncrc.recover.20260401T100000Z")
+	newer := filepath.Join(root, "mbsyncrc.recover.20260401T110000Z")
+	mustWriteFile(t, older, "older")
+	mustWriteFile(t, newer, "newer")
+	oldTime := time.Unix(100, 0)
+	newTime := time.Unix(200, 0)
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes(%s): %v", older, err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
+		t.Fatalf("Chtimes(%s): %v", newer, err)
+	}
+
+	configPath, runID, err := findRecoveryResumeConfig(root, "")
+	if err != nil {
+		t.Fatalf("findRecoveryResumeConfig() error = %v", err)
+	}
+	if configPath != newer {
+		t.Fatalf("configPath = %s, want %s", configPath, newer)
+	}
+	if runID != "20260401T110000Z" {
+		t.Fatalf("runID = %s", runID)
+	}
+}
+
+func TestFindRecoveryResumeConfigReturnsExplicitRunID(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "mbsyncrc.recover.20260401T141455Z")
+	mustWriteFile(t, path, "config")
+
+	configPath, runID, err := findRecoveryResumeConfig(root, "20260401T141455Z")
+	if err != nil {
+		t.Fatalf("findRecoveryResumeConfig() error = %v", err)
+	}
+	if configPath != path {
+		t.Fatalf("configPath = %s, want %s", configPath, path)
+	}
+	if runID != "20260401T141455Z" {
+		t.Fatalf("runID = %s", runID)
+	}
+}

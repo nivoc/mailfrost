@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -169,7 +170,9 @@ func (r *Runtime) CommandEnv(extra map[string]string) []string {
 }
 
 func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdinData ...string) (string, error) {
-	r.LogFile("INFO", fmt.Sprintf("Running command: %s", strings.Join(command, " ")))
+	displayCommand := append([]string(nil), command...)
+	command = wrapCommandForTTY(command)
+	r.LogFile("INFO", fmt.Sprintf("Running command: %s", strings.Join(displayCommand, " ")))
 
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = r.CommandEnv(extraEnv)
@@ -196,17 +199,39 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 		mu     sync.Mutex
 		wg     sync.WaitGroup
 	)
+	mirrorToConsole := shouldMirrorCommandOutput(command)
+	mbsyncFilter := newMbsyncConsoleFilter(command)
 	copyOutput := func(pipe io.ReadCloser) {
 		defer wg.Done()
-		data, readErr := io.ReadAll(pipe)
-		if len(data) > 0 {
-			mu.Lock()
-			_, _ = output.Write(data)
-			mu.Unlock()
-			r.LogFileRaw(string(data))
-		}
-		if readErr != nil {
-			r.LogFile("WARN", fmt.Sprintf("Read command output failed for %s: %v", strings.Join(command, " "), readErr))
+		buffer := make([]byte, 32*1024)
+		var pending string
+		for {
+			n, readErr := pipe.Read(buffer)
+			if n > 0 {
+				chunk := string(buffer[:n])
+				mu.Lock()
+				_, _ = output.Write(buffer[:n])
+				mu.Unlock()
+				r.LogFileRaw(chunk)
+				if mirrorToConsole {
+					if mbsyncFilter != nil {
+						pending = mbsyncFilter.consume(r, pending, chunk)
+					} else {
+						r.ConsoleRaw(chunk)
+					}
+				}
+			}
+			if readErr == nil {
+				continue
+			}
+			if mirrorToConsole && mbsyncFilter != nil && strings.TrimSpace(pending) != "" {
+				mbsyncFilter.emitRaw(r, pending)
+			}
+			if readErr == io.EOF {
+				return
+			}
+			r.LogFile("WARN", fmt.Sprintf("Read command output failed for %s: %v", strings.Join(displayCommand, " "), readErr))
+			return
 		}
 	}
 	wg.Add(2)
@@ -227,8 +252,11 @@ func (r *Runtime) RunCommand(command []string, extraEnv map[string]string, stdin
 			wg.Wait()
 			goto finished
 		case <-ticker.C:
+			if mirrorToConsole {
+				continue
+			}
 			elapsed := time.Since(startedAt).Round(time.Second)
-			message := fmt.Sprintf("Still running: %s (%s elapsed)", strings.Join(command, " "), elapsed)
+			message := fmt.Sprintf("Still running: %s (%s elapsed)", strings.Join(displayCommand, " "), elapsed)
 			r.Console(message)
 			r.LogFile("INFO", message)
 		}
@@ -238,11 +266,106 @@ finished:
 	outputText := output.String()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return outputText, fmt.Errorf("command failed with exit code %d: %s", exitErr.ExitCode(), strings.Join(command, " "))
+			return outputText, fmt.Errorf("command failed with exit code %d: %s", exitErr.ExitCode(), strings.Join(displayCommand, " "))
 		}
-		return outputText, fmt.Errorf("run command %s: %w", strings.Join(command, " "), err)
+		return outputText, fmt.Errorf("run command %s: %w", strings.Join(displayCommand, " "), err)
 	}
 	return outputText, nil
+}
+
+func shouldMirrorCommandOutput(command []string) bool {
+	if len(command) == 0 {
+		return false
+	}
+	base := filepath.Base(command[0])
+	if base == "script" && len(command) >= 4 {
+		return filepath.Base(command[3]) == "mbsync"
+	}
+	return base == "mbsync"
+}
+
+func wrapCommandForTTY(command []string) []string {
+	if len(command) == 0 {
+		return command
+	}
+	if filepath.Base(command[0]) != "mbsync" {
+		return command
+	}
+	if _, err := os.Stat("/usr/bin/script"); err != nil {
+		return command
+	}
+	return append([]string{"/usr/bin/script", "-q", "/dev/null"}, command...)
+}
+
+type mbsyncConsoleFilter struct{}
+
+func newMbsyncConsoleFilter(command []string) *mbsyncConsoleFilter {
+	if len(command) == 0 {
+		return nil
+	}
+	base := filepath.Base(command[0])
+	if base == "mbsync" {
+		return &mbsyncConsoleFilter{}
+	}
+	if base == "script" && len(command) >= 4 && filepath.Base(command[3]) == "mbsync" {
+		return &mbsyncConsoleFilter{}
+	}
+	return nil
+}
+
+func (f *mbsyncConsoleFilter) consume(runtime *Runtime, pending, chunk string) string {
+	combined := pending + chunk
+	for {
+		split := strings.IndexAny(combined, "\r\n")
+		if split < 0 {
+			return combined
+		}
+		line := combined[:split]
+		if strings.TrimSpace(line) != "" {
+			f.emit(runtime, line)
+		}
+		combined = combined[split+1:]
+	}
+}
+
+func (f *mbsyncConsoleFilter) emit(runtime *Runtime, line string) {
+	if formatted, ok := formatMbsyncProgressLine(line); ok {
+		runtime.Console(formatted)
+		return
+	}
+	f.emitRaw(runtime, line)
+}
+
+func (f *mbsyncConsoleFilter) emitRaw(runtime *Runtime, line string) {
+	trimmed := strings.TrimSpace(stripANSI(line))
+	if trimmed == "" {
+		return
+	}
+	runtime.ConsoleRaw(trimmed + "\n")
+}
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func stripANSI(value string) string {
+	return ansiEscapePattern.ReplaceAllString(value, "")
+}
+
+func formatMbsyncProgressLine(line string) (string, bool) {
+	line = strings.TrimSpace(stripANSI(line))
+	fields := strings.Fields(line)
+	if len(fields) >= 10 && fields[0] == "C:" && fields[2] == "B:" && fields[4] == "F:" {
+		mailboxProgress := fields[3]
+		uploadProgress := strings.TrimPrefix(fields[5], "+")
+		deleteProgress := strings.TrimPrefix(fields[8], "-")
+		return fmt.Sprintf("Mailbox %s | IMAP upload %s | delete %s", mailboxProgress, uploadProgress, deleteProgress), true
+	}
+	if len(fields) >= 9 && fields[0] == "Channels:" && fields[2] == "Boxes:" && fields[4] == "Far:" {
+		boxes := fields[3]
+		upload := strings.TrimPrefix(fields[5], "+")
+		deleteCount := strings.TrimPrefix(fields[8], "-")
+		return fmt.Sprintf("Summary | Mailboxes %s | IMAP upload %s | delete %s", boxes, upload, deleteCount), true
+	}
+	return "", false
 }
 
 func (r *Runtime) SendAlert(status, subject, body string) {

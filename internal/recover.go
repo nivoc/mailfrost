@@ -26,6 +26,12 @@ type RecoverApp struct {
 	stdin           *bufio.Reader
 }
 
+type RecoverResumeApp struct {
+	Config    Config
+	Runtime   *Runtime
+	RunIDFlag string
+}
+
 type recoverMailbox struct {
 	Name         string
 	MessageCount int
@@ -331,7 +337,7 @@ func (a *RecoverApp) executePlan(plan recoverPlan) error {
 	}
 	command := a.recoveryMbsyncCommand(recoveryConfigPath)
 	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
-		return fmt.Errorf("run recovery mbsync: %w", err)
+		return fmt.Errorf("run recovery mbsync: %w\nresume with: mail-backup recover-resume -run %s", err, a.Runtime.RunID)
 	}
 	return nil
 }
@@ -933,6 +939,30 @@ func (a *RecoverApp) recoveryMbsyncCommand(configPath string) []string {
 	return []string{binary, "-c", configPath, "mail-backup-recover"}
 }
 
+func (a *RecoverResumeApp) Run() error {
+	configPath, runID, err := findRecoveryResumeConfig(a.Config.StateDir, a.RunIDFlag)
+	if err != nil {
+		return err
+	}
+
+	a.Runtime.Console(fmt.Sprintf("Resuming recovery mbsync push for run %s...", runID))
+	command := a.recoveryMbsyncCommand(configPath)
+	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
+		return fmt.Errorf("resume recovery mbsync: %w\nretry with: mail-backup recover-resume -run %s", err, runID)
+	}
+	a.Runtime.Console(fmt.Sprintf("Recovery mbsync push completed for run %s", runID))
+	a.Runtime.Console("If the previous recovery stopped after an mbsync timeout, the staged push has now been retried without clearing mailboxes again.")
+	return nil
+}
+
+func (a *RecoverResumeApp) recoveryMbsyncCommand(configPath string) []string {
+	binary := "mbsync"
+	if len(a.Config.MbsyncCommand) > 0 {
+		binary = a.Config.MbsyncCommand[0]
+	}
+	return []string{binary, "-c", configPath, "mail-backup-recover"}
+}
+
 func renderRecoveryMbsyncConfig(host, port, username, maildirPath, syncStateDir string, patterns []string) string {
 	if port == "" {
 		port = "993"
@@ -980,4 +1010,49 @@ func recoveryMbsyncPatterns(ignoreMailboxRegex string) []string {
 		)
 	}
 	return patterns
+}
+
+func findRecoveryResumeConfig(stateDir, runID string) (string, string, error) {
+	if strings.TrimSpace(runID) != "" {
+		configPath := filepath.Join(stateDir, fmt.Sprintf("mbsyncrc.recover.%s", strings.TrimSpace(runID)))
+		info, err := os.Stat(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", "", fmt.Errorf("recovery config not found for run %s: %s", runID, configPath)
+			}
+			return "", "", fmt.Errorf("stat recovery config %s: %w", configPath, err)
+		}
+		if info.IsDir() {
+			return "", "", fmt.Errorf("recovery config path is a directory: %s", configPath)
+		}
+		return configPath, strings.TrimSpace(runID), nil
+	}
+
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return "", "", fmt.Errorf("read state dir for recovery configs: %w", err)
+	}
+
+	const prefix = "mbsyncrc.recover."
+	var latestName string
+	var latestMod time.Time
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return "", "", fmt.Errorf("stat recovery config %s: %w", entry.Name(), err)
+		}
+		if latestName == "" || info.ModTime().After(latestMod) {
+			latestName = entry.Name()
+			latestMod = info.ModTime()
+		}
+	}
+	if latestName == "" {
+		return "", "", fmt.Errorf("no recovery mbsync config found in %s", stateDir)
+	}
+
+	foundRunID := strings.TrimPrefix(latestName, prefix)
+	return filepath.Join(stateDir, latestName), foundRunID, nil
 }
