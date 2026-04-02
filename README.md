@@ -133,6 +133,35 @@ Show the tool version:
 mailfrost version
 ```
 
+## Scheduling on macOS
+
+For unattended runs on macOS, use a user `launchd` agent.
+
+See the example LaunchAgent plist:
+
+[`examples/com.matthias.mailfrost.plist`](./examples/com.matthias.mailfrost.plist)
+
+Load it with:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.matthias.mailfrost.plist 2>/dev/null
+launchctl load ~/Library/LaunchAgents/com.matthias.mailfrost.plist
+launchctl start com.matthias.mailfrost
+```
+
+Check that it is loaded:
+
+```bash
+launchctl list | grep mailfrost
+```
+
+Notes:
+
+- use absolute paths for the binary, `config`, and `.env`
+- `StartInterval` is in seconds, so `7200` means every 2 hours
+- Mailfrost already takes a lock in `state_dir/.lock`, so overlapping scheduled runs will fail safely
+- review `data/state/logs/` and `alerts.log` as part of normal monitoring
+
 ## How It Works
 
 The backup flow:
