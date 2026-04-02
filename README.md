@@ -11,6 +11,12 @@ unzip mailfrost_...zip
 chmod +x mailfrost
 ```
 
+On macOS, if the unsigned binary is blocked with `zsh: killed` or a quarantine warning, remove the quarantine attribute once:
+
+```bash
+xattr -d com.apple.quarantine ./mailfrost
+```
+
 `Mailfrost` is a standalone Go tool for Maildir integrity tracking, confidence, and backup.
 
 In normal use it does four things in one run:

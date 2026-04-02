@@ -52,8 +52,19 @@ jobs:
           mkdir -p dist
           out_dir="${APP_NAME}_${VERSION}_${ASSET_NAME}"
           bin_name="${APP_NAME}"
+          mkdir -p "${out_dir}"
+          cat > "${out_dir}/README.txt" <<'EOF'
+          Mailfrost
+
+          1. Unzip this archive.
+          2. Make the binary executable:
+             chmod +x mailfrost
+
+          On macOS, if the binary is blocked because it is unsigned, run:
+             xattr -d com.apple.quarantine ./mailfrost
+          EOF
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${out_dir}/${bin_name}" ./cmd/mailfrost
-          (cd "${out_dir}" && zip -q "../dist/${out_dir}.zip" "${bin_name}")
+          (cd "${out_dir}" && zip -q "../dist/${out_dir}.zip" "${bin_name}" README.txt)
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
