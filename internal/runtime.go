@@ -386,7 +386,7 @@ func formatMbsyncProgressLineForMode(line, mode string) (string, bool) {
 
 func detectMbsyncMode(command []string) string {
 	for _, part := range command {
-		if part == "mail-backup-recover" {
+		if part == defaultRecoverChannelName {
 			return "recover"
 		}
 	}

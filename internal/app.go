@@ -27,16 +27,17 @@ func (a *App) RunBackup() (int, error) {
 	reportTextPath := a.reportTextPath()
 
 	a.Runtime.Console(fmt.Sprintf(
-		"mail-backup: syncing %s@%s into %s",
+		"%s: syncing %s@%s into %s",
+		defaultToolName,
 		strings.TrimSpace(a.Config.Env["IMAP_USERNAME"]),
 		strings.TrimSpace(a.Config.Env["IMAP_HOST"]),
 		a.Config.MaildirPath,
 	))
-	a.Runtime.Console("mail-backup: sync start")
+	a.Runtime.Console(defaultToolName + ": sync start")
 	if _, err := a.Runtime.RunCommand(a.Config.MbsyncCommand, nil); err != nil {
 		return 0, err
 	}
-	a.Runtime.Console("mail-backup: sync done")
+	a.Runtime.Console(defaultToolName + ": sync done")
 
 	currentManifest, err := BuildManifest(a.Config.MaildirPath, a.Config.IgnoreMailboxRegex, time.Now())
 	if err != nil {
@@ -68,15 +69,15 @@ func (a *App) RunBackup() (int, error) {
 	}
 	a.printAuditSummary(report)
 
-	a.Runtime.Console("mail-backup: kopia backup start")
+	a.Runtime.Console(defaultToolName + ": kopia backup start")
 	snapshotID, snapshotSize, err := a.runKopiaSnapshotPath(a.Config.MaildirPath, a.Config.KopiaSnapshotArgs)
 	if err != nil {
 		return 0, err
 	}
 	if snapshotID != "" {
-		a.Runtime.Console(fmt.Sprintf("mail-backup: kopia backup done (snapshot %s, %s)", snapshotID, snapshotSize))
+		a.Runtime.Console(fmt.Sprintf("%s: kopia backup done (snapshot %s, %s)", defaultToolName, snapshotID, snapshotSize))
 	} else {
-		a.Runtime.Console("mail-backup: kopia backup done")
+		a.Runtime.Console(defaultToolName + ": kopia backup done")
 	}
 
 	if a.Config.KopiaIncludeStateDir {
@@ -252,6 +253,7 @@ func (a *App) runKopiaSnapshotPath(path string, extraArgs []string) (string, str
 	command = append(command, "--json")
 	command = append(command, extraArgs...)
 	if path == a.Config.MaildirPath {
+		command = append(command, "--tags", legacyKopiaPurposeTag)
 		command = append(command, "--tags", "account:"+normalizedAccountTag(strings.TrimSpace(a.Config.Env["IMAP_USERNAME"])))
 	}
 	command = append(command, path)

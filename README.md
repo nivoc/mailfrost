@@ -1,15 +1,15 @@
-# Mail Backup
+# Mailfrost
 
-`mail-backup` is a standalone Go tool for Maildir-based mail backup and integrity auditing.
+`Mailfrost` is a standalone Go tool for Maildir integrity tracking, confidence, and backup.
 
 In normal use it does four things in one run:
 
 - syncs mail with `mbsync`
 - scans the local Maildir into a manifest
-- alerts if stable mail disappears, mutates, changes mailbox placement, or loses copies
+- tracks and hashes stable mail so you can detect when old messages disappear, mutate, move unexpectedly, or lose copies
 - backs up the Maildir and tool state with `kopia`
 
-Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. If a stable message vanishes or changes unexpectedly, the run exits with an alert instead of silently accepting the new state.
+Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. The main purpose is confidence in your mailbox over time, especially in the face of faulty mail clients, sync agents, or accidental modifications. If stable mail changes unexpectedly, the run exits with an alert instead of silently accepting the new state.
 
 ## Requirements
 
@@ -31,13 +31,13 @@ make build
 Run the interactive setup wizard:
 
 ```bash
-./mail-backup setup
+./mailfrost setup
 ```
 
 Then run the normal backup flow:
 
 ```bash
-./mail-backup backup
+./mailfrost backup
 ```
 
 That is the intended setup path.
@@ -61,37 +61,37 @@ You can rerun `setup` at any time to refresh values.
 Normal backup:
 
 ```bash
-./mail-backup backup
+./mailfrost backup
 ```
 
 Recover the managed IMAP mailboxes from a snapshot:
 
 ```bash
-./mail-backup recover
+./mailfrost recover
 ```
 
 Resume a failed recovery push without clearing mailboxes again:
 
 ```bash
-./mail-backup recover-resume
+./mailfrost recover-resume
 ```
 
 Restore a snapshot into a local directory:
 
 ```bash
-./mail-backup restore
+./mailfrost restore
 ```
 
 Accept the current Maildir as the new baseline:
 
 ```bash
-./mail-backup rebaseline
+./mailfrost rebaseline
 ```
 
 Show the tool version:
 
 ```bash
-./mail-backup version
+./mailfrost version
 ```
 
 ## How It Works
@@ -174,7 +174,7 @@ For S3 repositories, `.env` also contains:
 KOPIA_REPO_TYPE=s3
 KOPIA_S3_BUCKET=your-bucket
 KOPIA_S3_ENDPOINT=s3.<region>.wasabisys.com
-KOPIA_S3_PREFIX=mail-backup
+KOPIA_S3_PREFIX=mailfrost
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 ```
@@ -213,7 +213,7 @@ The tool does not upload mail back to IMAP or perform server-side replay.
 - it restores the selected Kopia snapshot into a staging Maildir under `state_dir/recoveries/`
 - it can copy currently managed remote mail into a server-side safety mailbox tree before destructive recovery
 - it rewrites the managed IMAP mailboxes from that staging Maildir using a dedicated temporary `mbsync` config
-- it discovers snapshots by mail-backup purpose plus the configured IMAP account, so recovery works from a different local directory on another machine
+- it discovers snapshots by the Mailfrost purpose tag plus the configured IMAP account, so recovery works from a different local directory on another machine
 - managed mailboxes are the mailboxes not matched by `IGNORE_MAILBOX_REGEX`
 - it uses isolated temporary `mbsync` `SyncState`, separate from normal backup sync state
 - interactive mode asks whether to create the safety copy and warns that it may temporarily require about 2x mailbox space
@@ -224,10 +224,10 @@ The tool does not upload mail back to IMAP or perform server-side replay.
 Examples:
 
 ```bash
-./mail-backup recover -snapshot <id>
-./mail-backup recover -snapshot <id> -yes -confirm-user user@example.com
-./mail-backup recover-resume
-./mail-backup recover-resume -run 20260401T141455Z
+./mailfrost recover -snapshot <id>
+./mailfrost recover -snapshot <id> -yes -confirm-user user@example.com
+./mailfrost recover-resume
+./mailfrost recover-resume -run 20260401T141455Z
 ```
 
 Important behavior:

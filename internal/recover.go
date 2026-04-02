@@ -156,7 +156,7 @@ func (a *RecoverApp) Run() error {
 	if plan.SafetyCopyEnabled {
 		a.Runtime.Console(fmt.Sprintf("Safety mailbox tree kept at %s (delete manually after checking it)", plan.SafetyMailboxRoot))
 	}
-	a.Runtime.Console("Run `mail-backup backup` and then `mail-backup rebaseline` if this recovered state is now the intended truth.")
+	a.Runtime.Console("Run `mailfrost backup` and then `mailfrost rebaseline` if this recovered state is now the intended truth.")
 	return nil
 }
 
@@ -337,7 +337,7 @@ func (a *RecoverApp) executePlan(plan recoverPlan) error {
 	}
 	command := a.recoveryMbsyncCommand(recoveryConfigPath)
 	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
-		return fmt.Errorf("run recovery mbsync: %w\nresume with: mail-backup recover-resume -run %s", err, a.Runtime.RunID)
+		return fmt.Errorf("run recovery mbsync: %w\nresume with: mailfrost recover-resume -run %s", err, a.Runtime.RunID)
 	}
 	return nil
 }
@@ -936,7 +936,7 @@ func (a *RecoverApp) recoveryMbsyncCommand(configPath string) []string {
 	if len(a.Config.MbsyncCommand) > 0 {
 		binary = a.Config.MbsyncCommand[0]
 	}
-	return []string{binary, "-c", configPath, "mail-backup-recover"}
+	return []string{binary, "-c", configPath, defaultRecoverChannelName}
 }
 
 func (a *RecoverResumeApp) Run() error {
@@ -948,7 +948,7 @@ func (a *RecoverResumeApp) Run() error {
 	a.Runtime.Console(fmt.Sprintf("Resuming recovery mbsync push for run %s...", runID))
 	command := a.recoveryMbsyncCommand(configPath)
 	if _, err := a.Runtime.RunCommand(command, nil); err != nil {
-		return fmt.Errorf("resume recovery mbsync: %w\nretry with: mail-backup recover-resume -run %s", err, runID)
+		return fmt.Errorf("resume recovery mbsync: %w\nretry with: mailfrost recover-resume -run %s", err, runID)
 	}
 	a.Runtime.Console(fmt.Sprintf("Recovery mbsync push completed for run %s", runID))
 	a.Runtime.Console("If the previous recovery stopped after an mbsync timeout, the staged push has now been retried without clearing mailboxes again.")
@@ -960,7 +960,7 @@ func (a *RecoverResumeApp) recoveryMbsyncCommand(configPath string) []string {
 	if len(a.Config.MbsyncCommand) > 0 {
 		binary = a.Config.MbsyncCommand[0]
 	}
-	return []string{binary, "-c", configPath, "mail-backup-recover"}
+	return []string{binary, "-c", configPath, defaultRecoverChannelName}
 }
 
 func renderRecoveryMbsyncConfig(host, port, username, maildirPath, syncStateDir string, patterns []string) string {
@@ -987,7 +987,7 @@ func renderRecoveryMbsyncConfig(host, port, username, maildirPath, syncStateDir 
 		fmt.Sprintf("Inbox %q", filepath.ToSlash(filepath.Join(filepath.Clean(maildirPath), "INBOX"))),
 		"SubFolders Verbatim",
 		"",
-		"Channel mail-backup-recover",
+		"Channel " + defaultRecoverChannelName,
 		"Far :remote-store:",
 		"Near :local-store:",
 		"Patterns " + strings.Join(patterns, " "),

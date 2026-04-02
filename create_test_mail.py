@@ -33,13 +33,13 @@ def build_message(username: str, sent_at: datetime, token: str) -> EmailMessage:
     message = EmailMessage()
     message["From"] = username
     message["To"] = username
-    message["Subject"] = f"mail-backup synthetic old mail {token}"
+    message["Subject"] = f"mailfrost synthetic old mail {token}"
     message["Date"] = sent_at.strftime("%a, %d %b %Y %H:%M:%S +0000")
-    message["Message-ID"] = f"<mail-backup-{token}@{domain}>"
+    message["Message-ID"] = f"<mailfrost-{token}@{domain}>"
     message.set_content(
         "\n".join(
             [
-                "Synthetic old test message for mail-backup.",
+                "Synthetic old test message for Mailfrost.",
                 "Safe to delete after testing.",
                 f"Token: {token}",
             ]

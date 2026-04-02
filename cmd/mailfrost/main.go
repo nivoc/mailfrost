@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"mail-backup/internal"
+	"mailfrost/internal"
 	"os"
 )
 
@@ -19,7 +19,7 @@ func runMain() int {
 	configPath := flag.String("config", defaultConfigPath, "Path to the non-secret config file")
 	envPath := flag.String("env", defaultEnvPath, "Path to the .env secrets file")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: mail-backup [flags] [command]
+		fmt.Fprintf(os.Stderr, `Usage: mailfrost [flags] [command]
 
 Commands:
   backup      Sync mail, audit stable messages, and create a kopia backup
@@ -29,7 +29,7 @@ Commands:
   rebaseline  Accept the current Maildir state as the new known-good baseline
   restore     Restore a Maildir snapshot from kopia
   setup       Interactive setup wizard for mbsync and kopia
-  version     Show the mail-backup version
+  version     Show the Mailfrost version
 
 Flags:
 `)
@@ -89,13 +89,13 @@ Recover-resume flags (use after "recover-resume"):
 		fmt.Println(versionString())
 		return runSetup(*envPath)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mail-backup [backup|recover|recover-resume|rebaseline|restore|setup|version]\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mailfrost [backup|recover|recover-resume|rebaseline|restore|setup|version]\n", subcommand)
 		return 1
 	}
 }
 
 func versionString() string {
-	return "mail-backup " + version
+	return "mailfrost " + version
 }
 
 func runBackup(configPath, envPath string) int {

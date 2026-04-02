@@ -13,6 +13,10 @@ import (
 )
 
 const (
+	defaultToolName                 = "mailfrost"
+	defaultRecoverChannelName       = "mailfrost-recover"
+	currentKopiaPurposeTag          = "purpose:mailfrost"
+	legacyKopiaPurposeTag           = "purpose:mail-backup"
 	defaultMaildirPath              = "./data/maildir"
 	defaultStateDir                 = "./data/state"
 	defaultKopiaConfigPath          = "./data/kopia/repository.config"
@@ -24,9 +28,9 @@ const (
 )
 
 var (
-	defaultMbsyncCommand     = []string{"mbsync", "-c", "./data/state/mbsyncrc.generated", "mail-backup"}
+	defaultMbsyncCommand     = []string{"mbsync", "-c", "./data/state/mbsyncrc.generated", defaultToolName}
 	defaultKopiaCommand      = []string{"kopia"}
-	defaultKopiaSnapshotArgs = []string{"--tags", "purpose:mail-backup"}
+	defaultKopiaSnapshotArgs = []string{"--tags", currentKopiaPurposeTag}
 )
 
 type Config struct {

@@ -2,7 +2,7 @@
 .cache/
 .env
 .env.local
-/mail-backup
+/mailfrost
 /restored/
 /data/
 /config

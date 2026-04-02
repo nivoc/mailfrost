@@ -340,7 +340,7 @@ func (a *SetupApp) Run() error {
 	if objectLock.Enabled {
 		fmt.Println("Object Lock note: no extra manual step. Regular backup runs will trigger Kopia maintenance to extend locks before they expire.")
 	}
-	fmt.Println("Run `mail-backup backup` to start backing up.")
+	fmt.Println("Run `mailfrost backup` to start backing up.")
 	return nil
 }
 
@@ -362,7 +362,7 @@ func renderMbsyncConfig(host, port, username, maildirPath string) string {
 		fmt.Sprintf("Inbox %q", filepath.ToSlash(filepath.Join(filepath.Clean(maildirPath), "INBOX"))),
 		"SubFolders Verbatim",
 		"",
-		"Channel mail-backup",
+		"Channel " + defaultToolName,
 		"Far :remote-store:",
 		"Near :local-store:",
 		"Patterns *",

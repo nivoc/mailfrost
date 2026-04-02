@@ -1,4 +1,4 @@
-module mail-backup
+module mailfrost
 
 go 1.26.1
 

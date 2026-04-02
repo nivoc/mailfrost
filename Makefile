@@ -1,7 +1,7 @@
 .PHONY: build run backup recover recover-resume rebaseline restore setup version test fmt clean help
 
-BINARY=mail-backup
-MAIN_SRC=./cmd/mail-backup
+BINARY=mailfrost
+MAIN_SRC=./cmd/mailfrost
 
 all: build
 
