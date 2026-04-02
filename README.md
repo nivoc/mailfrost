@@ -18,7 +18,7 @@ Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. The m
 Homebrew is the default install path on macOS Apple Silicon:
 
 ```bash
-brew tap nivoc/mailfrost
+brew tap nivoc/tap
 brew install mailfrost
 ```
 

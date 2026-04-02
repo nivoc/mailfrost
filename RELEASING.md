@@ -38,7 +38,7 @@ Each zip contains the `mailfrost` binary.
 
 The version string inside the binary is set from the git tag, for example `v0.1.1`.
 
-After the release asset is uploaded, the workflow also updates the dedicated Homebrew tap repo `nivoc/homebrew-mailfrost` so `brew upgrade mailfrost` points at the new macOS asset and checksum automatically.
+After the release asset is uploaded, the workflow also updates the shared Homebrew tap repo `nivoc/homebrew-tap` so `brew upgrade mailfrost` points at the new macOS asset and checksum automatically.
 
 ## Notes
 

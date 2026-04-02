@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          repository: nivoc/homebrew-mailfrost
+          repository: nivoc/homebrew-tap
           ref: main
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
