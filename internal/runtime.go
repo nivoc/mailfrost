@@ -314,7 +314,10 @@ func newConsoleMirrorFilter(command []string) consoleMirrorFilter {
 	if filter := newMbsyncConsoleFilter(command); filter != nil {
 		return filter
 	}
-	return newKopiaSnapshotConsoleFilter(command)
+	if filter := newKopiaSnapshotConsoleFilter(command); filter != nil {
+		return filter
+	}
+	return nil
 }
 
 func wrapCommandForTTY(command []string) []string {

@@ -288,6 +288,15 @@ func TestRenderAuditSummaryBoxBaselineInit(t *testing.T) {
 	}
 }
 
+func TestNewConsoleMirrorFilterIgnoresNonSnapshotKopiaCommands(t *testing.T) {
+	if filter := newConsoleMirrorFilter([]string{"kopia", "policy", "show"}); filter != nil {
+		t.Fatalf("newConsoleMirrorFilter() = %#v, want nil", filter)
+	}
+	if filter := newConsoleMirrorFilter([]string{"kopia", "snapshot", "create"}); filter == nil {
+		t.Fatalf("newConsoleMirrorFilter() = nil, want snapshot filter")
+	}
+}
+
 func TestSetupPromptOptionalClearDoesNotReintroduceExistingS3Prefix(t *testing.T) {
 	existing := map[string]string{
 		"KOPIA_S3_PREFIX": "old-prefix/",
@@ -420,12 +429,39 @@ func TestRenderKopiaRepoStatus(t *testing.T) {
 		"KOPIA REPOSITORY",
 		"type: s3",
 		"compression: zstd",
-		"object lock / compliance hold: COMPLIANCE, 30 days",
+		"configured object lock: COMPLIANCE, 30 days",
 		"maintenance: every 7 days",
 	} {
 		if !strings.Contains(got, needle) {
 			t.Fatalf("renderKopiaRepoStatus() missing %q in:\n%s", needle, got)
 		}
+	}
+}
+
+func TestRenderKopiaPostBackupSummary(t *testing.T) {
+	got := renderKopiaPostBackupSummary("zstd", "enabled")
+	for _, needle := range []string{
+		"KOPIA",
+		"compression: zstd",
+		"object lock extension: enabled",
+	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("renderKopiaPostBackupSummary() missing %q in:\n%s", needle, got)
+		}
+	}
+}
+
+func TestParseKopiaMaintenanceInfoObjectLockExtension(t *testing.T) {
+	output := strings.Join([]string{
+		"Owner: test@example",
+		"Object Lock Extension: enabled",
+		"Recent Maintenance Runs:",
+	}, "\n")
+	if got := parseKopiaMaintenanceInfoObjectLockExtension(output); got != "enabled" {
+		t.Fatalf("parseKopiaMaintenanceInfoObjectLockExtension() = %q, want enabled", got)
+	}
+	if got := parseKopiaMaintenanceInfoObjectLockExtension("Owner: test@example\n"); got != "unknown" {
+		t.Fatalf("parseKopiaMaintenanceInfoObjectLockExtension() unknown = %q", got)
 	}
 }
 

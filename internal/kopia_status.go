@@ -31,10 +31,22 @@ func renderKopiaRepoStatus(status kopiaRepoStatus) string {
 		"",
 		fmt.Sprintf("encryption: %s", status.Encryption),
 		fmt.Sprintf("compression: %s", status.Compression),
-		fmt.Sprintf("object lock / compliance hold: %s", status.ComplianceHold),
+		fmt.Sprintf("configured object lock: %s", status.ComplianceHold),
 		fmt.Sprintf("maintenance: %s", formatMaintenanceInterval(status.MaintenanceIntervalDays)),
 		fmt.Sprintf("last maintenance: %s", status.LastMaintenance),
 		fmt.Sprintf("next maintenance due: %s", status.NextMaintenanceDue),
+		"",
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderKopiaPostBackupSummary(compression, objectLockExtension string) string {
+	lines := []string{
+		"",
+		"KOPIA",
+		"",
+		fmt.Sprintf("compression: %s", compression),
+		fmt.Sprintf("object lock extension: %s", objectLockExtension),
 		"",
 	}
 	return strings.Join(lines, "\n")
@@ -150,6 +162,20 @@ func parseKopiaCompressionPolicyShow(output string) string {
 			}
 		case inCompressionSection && trimmed == "":
 			inCompressionSection = false
+		}
+	}
+	return "unknown"
+}
+
+func parseKopiaMaintenanceInfoObjectLockExtension(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Object Lock Extension:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "Object Lock Extension:"))
+		if value != "" {
+			return strings.ToLower(value)
 		}
 	}
 	return "unknown"

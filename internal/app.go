@@ -47,7 +47,7 @@ func (a *App) RunBackup() (int, error) {
 	}
 	a.Runtime.Console(defaultToolName + ": sync done")
 
-	a.Runtime.Console(defaultToolName + ": audit start (scanning and hashing Maildir)")
+	a.Runtime.Console(defaultToolName + ": audit start (indexing mail and calculating hashes)")
 	currentManifest, err := BuildManifest(a.Config.MaildirPath, a.Config.IgnoreMailboxRegex, time.Now())
 	if err != nil {
 		return 0, err
@@ -497,8 +497,8 @@ func parseKopiaSnapshotSize(output string) string {
 
 func (a *App) printKopiaRepoStatus() {
 	compression := a.kopiaCompressionSummary()
-	status := buildKopiaRepoStatusFromConfig(a.Config, a.Runtime.Paths, compression)
-	a.Runtime.ConsoleRaw(renderKopiaRepoStatus(status))
+	objectLockExtension := a.kopiaObjectLockExtensionSummary()
+	a.Runtime.ConsoleRaw(renderKopiaPostBackupSummary(compression, objectLockExtension))
 }
 
 func (a *App) kopiaCompressionSummary() string {
@@ -512,6 +512,18 @@ func (a *App) kopiaCompressionSummary() string {
 		return "unknown"
 	}
 	return parseKopiaCompressionPolicyShow(output)
+}
+
+func (a *App) kopiaObjectLockExtensionSummary() string {
+	command := append([]string{}, a.Config.KopiaCommand...)
+	command = append(command, "maintenance", "info")
+	command = append(command, a.kopiaBaseArgs()...)
+	output, err := a.Runtime.RunCommand(command, a.kopiaCommandEnv())
+	if err != nil {
+		a.Runtime.LogFile("WARN", fmt.Sprintf("Kopia maintenance info failed while building repo summary: %s", err))
+		return "unknown"
+	}
+	return parseKopiaMaintenanceInfoObjectLockExtension(output)
 }
 
 func formatBytes(bytes int64) string {
