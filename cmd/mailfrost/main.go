@@ -1,13 +1,31 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"mailfrost/internal"
+	"net/http"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 var version = "dev"
+
+const (
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorCyan   = "\033[36m"
+	colorYellow = "\033[33m"
+)
+
+type releaseInfo struct {
+	TagName string `json:"tag_name"`
+	HTMLURL string `json:"html_url"`
+}
 
 func main() {
 	os.Exit(runMain())
@@ -19,40 +37,35 @@ func runMain() int {
 	configPath := flag.String("config", defaultConfigPath, "Path to the non-secret config file")
 	envPath := flag.String("env", defaultEnvPath, "Path to the .env secrets file")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: mailfrost [flags] [command]
-
-Commands:
-  backup      Sync mail, audit stable messages, and create a kopia backup
-  recover     Restore a snapshot and rewrite the managed IMAP mailboxes to match it
-  recover-resume
-             Retry the last recovery mbsync push without clearing mailboxes again
-  rebaseline  Accept the current Maildir state as the new known-good baseline
-  restore     Restore a Maildir snapshot from kopia
-  setup       Interactive setup wizard for mbsync and kopia
-  version     Show the Mailfrost version
-
-Flags:
-`)
+		fmt.Fprintf(os.Stderr, "%sUsage:%s mailfrost [flags] [command]\n\n", colorHeader(), colorReset)
+		fmt.Fprintf(os.Stderr, "%sCommands:%s\n", colorHeader(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %sbackup%s          Sync mail, audit stable messages, and create a kopia backup\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %srecover%s         Restore a snapshot and rewrite the managed IMAP mailboxes to match it\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %srecover-resume%s  Retry the last recovery mbsync push without clearing mailboxes again\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %srebaseline%s      Accept the current Maildir state as the new known-good baseline\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %srestore%s         Restore a Maildir snapshot from kopia\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %ssetup%s           Interactive setup wizard for mbsync and kopia\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "  %sversion%s         Show the Mailfrost version\n\n", colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, "%sFlags:%s\n", colorHeader(), colorReset)
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, `
-Restore flags (use after "restore"):
-  -snapshot string
+		fmt.Fprintf(os.Stderr, "\n%sRestore flags%s (use after %srestore%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, `  -snapshot string
         Snapshot ID to restore (skip interactive selection)
   -target string
         Restore target directory (default: ./restored/<snapshot-id>)
   -force
         Allow restoring directly into the configured MAILDIR_PATH without interactive confirmation
-
-Recover flags (use after "recover"):
-  -snapshot string
+`)
+		fmt.Fprintf(os.Stderr, "\n%sRecover flags%s (use after %srecover%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, `  -snapshot string
         Snapshot ID to recover (skip interactive selection)
   -yes
         Allow destructive recovery without yes/no prompt
   -confirm-user string
         IMAP username confirmation for non-interactive destructive recovery
-
-Recover-resume flags (use after "recover-resume"):
-  -run string
+`)
+		fmt.Fprintf(os.Stderr, "\n%sRecover-resume flags%s (use after %srecover-resume%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
+		fmt.Fprintf(os.Stderr, `  -run string
         Recovery run ID to resume (default: latest recovery mbsync config in state dir)
 `)
 	}
@@ -63,39 +76,147 @@ Recover-resume flags (use after "recover-resume"):
 		subcommand = args[0]
 	}
 
+	printVersionBanner()
+
 	switch subcommand {
 	case "":
 		flag.Usage()
 		return 0
 	case "version":
-		fmt.Println(versionString())
 		return 0
 	case "backup":
-		fmt.Println(versionString())
 		return runBackup(*configPath, *envPath)
 	case "recover":
-		fmt.Println(versionString())
 		return runRecover(*configPath, *envPath, flag.Args()[1:])
 	case "recover-resume":
-		fmt.Println(versionString())
 		return runRecoverResume(*configPath, *envPath, flag.Args()[1:])
 	case "rebaseline":
-		fmt.Println(versionString())
 		return runRebaseline(*configPath, *envPath)
 	case "restore":
-		fmt.Println(versionString())
 		return runRestore(*configPath, *envPath, flag.Args()[1:])
 	case "setup":
-		fmt.Println(versionString())
 		return runSetup(*envPath)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mailfrost [backup|recover|recover-resume|rebaseline|restore|setup|version]\n", subcommand)
+		fmt.Fprintf(os.Stderr, "%sUnknown command:%s %s\n", colorWarning(), colorReset, subcommand)
+		fmt.Fprintf(os.Stderr, "Usage: mailfrost [backup|recover|recover-resume|rebaseline|restore|setup|version]\n")
 		return 1
 	}
 }
 
 func versionString() string {
 	return "mailfrost " + version
+}
+
+func printVersionBanner() {
+	fmt.Println(colorHeader() + versionString() + colorReset)
+	if info, ok := checkLatestRelease(); ok {
+		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, info.TagName, version)
+		if info.HTMLURL != "" {
+			fmt.Printf("%sDownload:%s %s\n", colorWarning(), colorReset, info.HTMLURL)
+		}
+	}
+}
+
+func checkLatestRelease() (releaseInfo, bool) {
+	if strings.TrimSpace(version) == "" || version == "dev" {
+		return releaseInfo{}, false
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/nivoc/mailfrost/releases/latest", nil)
+	if err != nil {
+		return releaseInfo{}, false
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "mailfrost/"+version)
+
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return releaseInfo{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return releaseInfo{}, false
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return releaseInfo{}, false
+	}
+
+	var info releaseInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return releaseInfo{}, false
+	}
+	if info.TagName == "" || !isVersionNewer(info.TagName, version) {
+		return releaseInfo{}, false
+	}
+	return info, true
+}
+
+func isVersionNewer(latest, current string) bool {
+	latestParts, okLatest := parseVersionParts(latest)
+	currentParts, okCurrent := parseVersionParts(current)
+	if !okLatest || !okCurrent {
+		return false
+	}
+	for i := 0; i < len(latestParts) || i < len(currentParts); i++ {
+		latestPart := versionPart(latestParts, i)
+		currentPart := versionPart(currentParts, i)
+		if latestPart > currentPart {
+			return true
+		}
+		if latestPart < currentPart {
+			return false
+		}
+	}
+	return false
+}
+
+func parseVersionParts(raw string) ([]int, bool) {
+	cleaned := strings.TrimSpace(strings.TrimPrefix(raw, "v"))
+	if cleaned == "" {
+		return nil, false
+	}
+	chunks := strings.Split(cleaned, ".")
+	parts := make([]int, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == "" {
+			return nil, false
+		}
+		end := 0
+		for end < len(chunk) && chunk[end] >= '0' && chunk[end] <= '9' {
+			end++
+		}
+		if end == 0 {
+			return nil, false
+		}
+		value, err := strconv.Atoi(chunk[:end])
+		if err != nil {
+			return nil, false
+		}
+		parts = append(parts, value)
+	}
+	return parts, true
+}
+
+func versionPart(parts []int, idx int) int {
+	if idx >= len(parts) {
+		return 0
+	}
+	return parts[idx]
+}
+
+func colorHeader() string {
+	return colorBold + colorCyan
+}
+
+func colorCommand() string {
+	return colorBold
+}
+
+func colorWarning() string {
+	return colorBold + colorYellow
 }
 
 func runBackup(configPath, envPath string) int {
