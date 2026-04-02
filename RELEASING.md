@@ -15,8 +15,8 @@ git push origin main
 ```
 
 3. Create the next version tag:
-
 ```bash
+(Check with git describe --tags --abbrev=0)
 git tag -a v0.1.1 -m "v0.1.1"
 ```
 
@@ -30,18 +30,19 @@ That tag push triggers the GitHub Actions release workflow.
 
 ## What The Workflow Builds
 
-The workflow currently publishes these release assets:
+The workflow currently publishes this release asset:
 
 - `mailfrost_vX.Y.Z_macos_apple_silicon.zip`
-- `mailfrost_vX.Y.Z_linux_x86_64.zip`
-- `mailfrost_vX.Y.Z_linux_arm64.zip`
 
 Each zip contains the `mailfrost` binary.
 
 The version string inside the binary is set from the git tag, for example `v0.1.1`.
 
+After the release asset is uploaded, the workflow also updates [Formula/mailfrost.rb](/Users/matthias/worklist/mail-backup/Formula/mailfrost.rb) on `main` so the Homebrew tap points at the new macOS asset and checksum automatically.
+
 ## Notes
 
 - Use a new tag for every release.
+- After the tag workflow finishes, `brew update && brew upgrade mailfrost` should pick up the new version automatically.
 - If a tag already exists locally, inspect it before reusing or moving it.
 - If `git push` fails with a DNS or network error, just retry when connectivity is back.
