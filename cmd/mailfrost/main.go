@@ -56,28 +56,6 @@ func runMain() int {
 		printCommandHelp("setup", "Interactive setup wizard for mbsync and kopia")
 		printCommandHelp("version", "Show the Mailfrost version")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%sFlags:%s\n", colorHeader(), colorReset)
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\n%sRestore flags%s (use after %srestore%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, `  -snapshot string
-        Snapshot ID to restore (skip interactive selection)
-  -target string
-        Restore target directory (default: ./restored/<snapshot-id>)
-  -force
-        Allow restoring directly into the configured MAILDIR_PATH without interactive confirmation
-`)
-		fmt.Fprintf(os.Stderr, "\n%sRecover flags%s (use after %srecover%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, `  -snapshot string
-        Snapshot ID to recover (skip interactive selection)
-  -yes
-        Allow destructive recovery without yes/no prompt
-  -confirm-user string
-        IMAP username confirmation for non-interactive destructive recovery
-`)
-		fmt.Fprintf(os.Stderr, "\n%sRecover-resume flags%s (use after %srecover-resume%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, `  -run string
-        Recovery run ID to resume (default: latest recovery mbsync config in state dir)
-`)
 	}
 	flag.Parse()
 
