@@ -2,21 +2,6 @@
 
 Note: this is still a personal tool. Use it at your own risk. It has only been tested against Fastmail so far.
 
-Download releases: https://github.com/nivoc/mailfrost/releases
-
-Release binaries are published as `.zip` files. Unzip the archive and make the binary executable before first use:
-
-```bash
-unzip mailfrost_...zip
-chmod +x mailfrost
-```
-
-On macOS, if the unsigned binary is blocked with `zsh: killed` or a quarantine warning, remove the quarantine attribute once:
-
-```bash
-xattr -d com.apple.quarantine ./mailfrost
-```
-
 `Mailfrost` is a standalone Go tool for Maildir integrity tracking, confidence, and backup.
 
 In normal use it does four things in one run:
@@ -27,6 +12,41 @@ In normal use it does four things in one run:
 - backs up the Maildir and tool state with `kopia`
 
 Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. The main purpose is confidence in your mailbox over time, especially in the face of faulty mail clients, sync agents, or accidental modifications. If stable mail changes unexpectedly, the run exits with an alert instead of silently accepting the new state.
+
+## Install
+
+Homebrew is the default install path on macOS Apple Silicon:
+
+```bash
+brew tap nivoc/mailfrost
+brew install mailfrost
+```
+
+Then run:
+
+```bash
+mailfrost setup
+mailfrost backup
+```
+
+Direct downloads are published at:
+
+`https://github.com/nivoc/mailfrost/releases`
+
+If you install from a release zip instead of Homebrew:
+
+```bash
+unzip mailfrost_...zip
+chmod +x mailfrost
+./mailfrost setup
+./mailfrost backup
+```
+
+On macOS, if the unsigned binary is blocked with `zsh: killed` or a quarantine warning, remove the quarantine attribute once:
+
+```bash
+xattr -d com.apple.quarantine ./mailfrost
+```
 
 ## Requirements
 
@@ -39,22 +59,16 @@ For stronger guarantees, keep the Kopia repository off-host and use storage-side
 
 ## Quick Start
 
-Build the binary:
-
-```bash
-make build
-```
-
 Run the interactive setup wizard:
 
 ```bash
-./mailfrost setup
+mailfrost setup
 ```
 
 Then run the normal backup flow:
 
 ```bash
-./mailfrost backup
+mailfrost backup
 ```
 
 That is the intended setup path.
@@ -73,42 +87,50 @@ That is the intended setup path.
 
 You can rerun `setup` at any time to refresh values.
 
+If you prefer building from source instead of using Homebrew or release zips:
+
+```bash
+make build
+./mailfrost setup
+./mailfrost backup
+```
+
 ## Common Commands
 
 Normal backup:
 
 ```bash
-./mailfrost backup
+mailfrost backup
 ```
 
 Recover the managed IMAP mailboxes from a snapshot:
 
 ```bash
-./mailfrost recover
+mailfrost recover
 ```
 
 Resume a failed recovery push without clearing mailboxes again:
 
 ```bash
-./mailfrost recover-resume
+mailfrost recover-resume
 ```
 
 Restore a snapshot into a local directory:
 
 ```bash
-./mailfrost restore
+mailfrost restore
 ```
 
 Accept the current Maildir as the new baseline:
 
 ```bash
-./mailfrost rebaseline
+mailfrost rebaseline
 ```
 
 Show the tool version:
 
 ```bash
-./mailfrost version
+mailfrost version
 ```
 
 ## How It Works
@@ -241,10 +263,10 @@ The tool does not upload mail back to IMAP or perform server-side replay.
 Examples:
 
 ```bash
-./mailfrost recover -snapshot <id>
-./mailfrost recover -snapshot <id> -yes -confirm-user user@example.com
-./mailfrost recover-resume
-./mailfrost recover-resume -run 20260401T141455Z
+mailfrost recover -snapshot <id>
+mailfrost recover -snapshot <id> -yes -confirm-user user@example.com
+mailfrost recover-resume
+mailfrost recover-resume -run 20260401T141455Z
 ```
 
 Important behavior:
