@@ -1,5 +1,7 @@
 # Mailfrost
 
+Note: this is still a personal tool. Use it at your own risk. It has only been tested against Fastmail so far.
+
 `Mailfrost` is a standalone Go tool for Maildir integrity tracking, confidence, and backup.
 
 In normal use it does four things in one run:
