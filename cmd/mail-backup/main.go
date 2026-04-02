@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+var version = "dev"
+
 func main() {
 	os.Exit(runMain())
 }
@@ -27,6 +29,7 @@ Commands:
   rebaseline  Accept the current Maildir state as the new known-good baseline
   restore     Restore a Maildir snapshot from kopia
   setup       Interactive setup wizard for mbsync and kopia
+  version     Show the mail-backup version
 
 Flags:
 `)
@@ -64,22 +67,35 @@ Recover-resume flags (use after "recover-resume"):
 	case "":
 		flag.Usage()
 		return 0
+	case "version":
+		fmt.Println(versionString())
+		return 0
 	case "backup":
+		fmt.Println(versionString())
 		return runBackup(*configPath, *envPath)
 	case "recover":
+		fmt.Println(versionString())
 		return runRecover(*configPath, *envPath, flag.Args()[1:])
 	case "recover-resume":
+		fmt.Println(versionString())
 		return runRecoverResume(*configPath, *envPath, flag.Args()[1:])
 	case "rebaseline":
+		fmt.Println(versionString())
 		return runRebaseline(*configPath, *envPath)
 	case "restore":
+		fmt.Println(versionString())
 		return runRestore(*configPath, *envPath, flag.Args()[1:])
 	case "setup":
+		fmt.Println(versionString())
 		return runSetup(*envPath)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mail-backup [backup|recover|recover-resume|rebaseline|restore|setup]\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: mail-backup [backup|recover|recover-resume|rebaseline|restore|setup|version]\n", subcommand)
 		return 1
 	}
+}
+
+func versionString() string {
+	return "mail-backup " + version
 }
 
 func runBackup(configPath, envPath string) int {

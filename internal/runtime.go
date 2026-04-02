@@ -297,7 +297,10 @@ func wrapCommandForTTY(command []string) []string {
 	return append([]string{"/usr/bin/script", "-q", "/dev/null"}, command...)
 }
 
-type mbsyncConsoleFilter struct{}
+type mbsyncConsoleFilter struct {
+	mode          string
+	lastFormatted string
+}
 
 func newMbsyncConsoleFilter(command []string) *mbsyncConsoleFilter {
 	if len(command) == 0 {
@@ -305,10 +308,10 @@ func newMbsyncConsoleFilter(command []string) *mbsyncConsoleFilter {
 	}
 	base := filepath.Base(command[0])
 	if base == "mbsync" {
-		return &mbsyncConsoleFilter{}
+		return &mbsyncConsoleFilter{mode: detectMbsyncMode(command)}
 	}
 	if base == "script" && len(command) >= 4 && filepath.Base(command[3]) == "mbsync" {
-		return &mbsyncConsoleFilter{}
+		return &mbsyncConsoleFilter{mode: detectMbsyncMode(command[3:])}
 	}
 	return nil
 }
@@ -329,10 +332,15 @@ func (f *mbsyncConsoleFilter) consume(runtime *Runtime, pending, chunk string) s
 }
 
 func (f *mbsyncConsoleFilter) emit(runtime *Runtime, line string) {
-	if formatted, ok := formatMbsyncProgressLine(line); ok {
+	if formatted, ok := formatMbsyncProgressLineForMode(line, f.mode); ok {
+		if formatted == f.lastFormatted {
+			return
+		}
+		f.lastFormatted = formatted
 		runtime.Console(formatted)
 		return
 	}
+	f.lastFormatted = ""
 	f.emitRaw(runtime, line)
 }
 
@@ -350,22 +358,39 @@ func stripANSI(value string) string {
 	return ansiEscapePattern.ReplaceAllString(value, "")
 }
 
-func formatMbsyncProgressLine(line string) (string, bool) {
+func formatMbsyncProgressLineForMode(line, mode string) (string, bool) {
 	line = strings.TrimSpace(stripANSI(line))
 	fields := strings.Fields(line)
-	if len(fields) >= 10 && fields[0] == "C:" && fields[2] == "B:" && fields[4] == "F:" {
+	if len(fields) >= 14 && fields[0] == "C:" && fields[2] == "B:" && fields[4] == "F:" && fields[9] == "N:" {
 		mailboxProgress := fields[3]
-		uploadProgress := strings.TrimPrefix(fields[5], "+")
-		deleteProgress := strings.TrimPrefix(fields[8], "-")
-		return fmt.Sprintf("Mailbox %s | IMAP upload %s | delete %s", mailboxProgress, uploadProgress, deleteProgress), true
+		farAdd := strings.TrimPrefix(fields[5], "+")
+		farDelete := strings.TrimPrefix(fields[8], "-")
+		nearAdd := strings.TrimPrefix(fields[10], "+")
+		if mode == "recover" {
+			return fmt.Sprintf("Mailbox %s | IMAP upload %s | delete %s", mailboxProgress, farAdd, farDelete), true
+		}
+		return fmt.Sprintf("Mailbox %s | remote %s | local %s", mailboxProgress, farAdd, nearAdd), true
 	}
-	if len(fields) >= 9 && fields[0] == "Channels:" && fields[2] == "Boxes:" && fields[4] == "Far:" {
+	if len(fields) >= 14 && fields[0] == "Channels:" && fields[2] == "Boxes:" && fields[4] == "Far:" && fields[9] == "Near:" {
 		boxes := fields[3]
-		upload := strings.TrimPrefix(fields[5], "+")
-		deleteCount := strings.TrimPrefix(fields[8], "-")
-		return fmt.Sprintf("Summary | Mailboxes %s | IMAP upload %s | delete %s", boxes, upload, deleteCount), true
+		farAdd := strings.TrimPrefix(fields[5], "+")
+		farDelete := strings.TrimPrefix(fields[8], "-")
+		nearAdd := strings.TrimPrefix(fields[10], "+")
+		if mode == "recover" {
+			return fmt.Sprintf("Summary | Mailboxes %s | IMAP upload %s | delete %s", boxes, farAdd, farDelete), true
+		}
+		return fmt.Sprintf("Summary | Mailboxes %s | remote %s | local %s", boxes, farAdd, nearAdd), true
 	}
 	return "", false
+}
+
+func detectMbsyncMode(command []string) string {
+	for _, part := range command {
+		if part == "mail-backup-recover" {
+			return "recover"
+		}
+	}
+	return "backup"
 }
 
 func (r *Runtime) SendAlert(status, subject, body string) {

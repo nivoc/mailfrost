@@ -26,6 +26,12 @@ func (a *App) RunBackup() (int, error) {
 	reportJSONPath := a.reportJSONPath()
 	reportTextPath := a.reportTextPath()
 
+	a.Runtime.Console(fmt.Sprintf(
+		"mail-backup: syncing %s@%s into %s",
+		strings.TrimSpace(a.Config.Env["IMAP_USERNAME"]),
+		strings.TrimSpace(a.Config.Env["IMAP_HOST"]),
+		a.Config.MaildirPath,
+	))
 	a.Runtime.Console("mail-backup: sync start")
 	if _, err := a.Runtime.RunCommand(a.Config.MbsyncCommand, nil); err != nil {
 		return 0, err
@@ -88,6 +94,7 @@ func (a *App) RunBackup() (int, error) {
 	if err := a.maybeRunKopiaMaintenance(); err != nil {
 		return 0, err
 	}
+	a.printKopiaRepoStatus()
 
 	switch report.Summary.Status {
 	case "alert":
@@ -378,6 +385,25 @@ func parseKopiaSnapshotSize(output string) string {
 		return formatBytes(result.RootEntry.Summary.Size)
 	}
 	return ""
+}
+
+func (a *App) printKopiaRepoStatus() {
+	compression := a.kopiaCompressionSummary()
+	status := buildKopiaRepoStatusFromConfig(a.Config, a.Runtime.Paths, compression)
+	a.Runtime.ConsoleRaw(renderKopiaRepoStatus(status))
+}
+
+func (a *App) kopiaCompressionSummary() string {
+	command := append([]string{}, a.Config.KopiaCommand...)
+	command = append(command, "policy", "show")
+	command = append(command, a.kopiaBaseArgs()...)
+	command = append(command, a.Config.MaildirPath)
+	output, err := a.Runtime.RunCommand(command, nil)
+	if err != nil {
+		a.Runtime.LogFile("WARN", fmt.Sprintf("Kopia policy show failed while building repo summary: %s", err))
+		return "unknown"
+	}
+	return parseKopiaCompressionPolicyShow(output)
 }
 
 func formatBytes(bytes int64) string {

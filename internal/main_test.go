@@ -251,8 +251,8 @@ func TestRenderGeneratedKopiaPasswordNotice(t *testing.T) {
 }
 
 func TestNormalizedAccountTagKeepsReadableStableSlug(t *testing.T) {
-	got := normalizedAccountTag("Testing+Inbox@mk1.me")
-	want := "testing-inbox-mk1-me"
+	got := normalizedAccountTag("Example+Inbox@example.com")
+	want := "example-inbox-example-com"
 	if got != want {
 		t.Fatalf("normalizedAccountTag() = %q, want %q", got, want)
 	}
@@ -304,6 +304,54 @@ func TestResolveKopiaPasswordAllowsOverridingStoredPasswordWhenConnecting(t *tes
 	}
 	if got != "new-secret" {
 		t.Fatalf("resolveKopiaPassword() = %q, want new-secret", got)
+	}
+}
+
+func TestParseKopiaCompressionPolicyShow(t *testing.T) {
+	output := strings.Join([]string{
+		"Policy for test:",
+		"",
+		"Compression:",
+		"  Compressor:                   zstd   inherited from (global)",
+		"",
+	}, "\n")
+	if got := parseKopiaCompressionPolicyShow(output); got != "zstd   inherited from (global)" {
+		t.Fatalf("parseKopiaCompressionPolicyShow() = %q", got)
+	}
+	if got := parseKopiaCompressionPolicyShow("Compression disabled.\n"); got != "disabled" {
+		t.Fatalf("parseKopiaCompressionPolicyShow() disabled = %q", got)
+	}
+}
+
+func TestRenderKopiaRepoStatus(t *testing.T) {
+	status := kopiaRepoStatus{
+		RepoType:                "s3",
+		Storage:                 "s3://bucket/mail (s3.example.com)",
+		Connected:               "yes",
+		Encryption:              "configured",
+		Compression:             "zstd",
+		ComplianceHold:          "COMPLIANCE, 30 days",
+		MaintenanceIntervalDays: 7,
+		LastMaintenance:         "never",
+		NextMaintenanceDue:      "now",
+	}
+	got := renderKopiaRepoStatus(status)
+	for _, needle := range []string{
+		"KOPIA REPOSITORY",
+		"type: s3",
+		"compression: zstd",
+		"object lock / compliance hold: COMPLIANCE, 30 days",
+		"maintenance: every 7 days",
+	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("renderKopiaRepoStatus() missing %q in:\n%s", needle, got)
+		}
+	}
+}
+
+func TestEnsureSetupToolsAvailable(t *testing.T) {
+	if err := ensureSetupToolsAvailable([]string{}); err != nil {
+		t.Fatalf("ensureSetupToolsAvailable(empty) error = %v", err)
 	}
 }
 

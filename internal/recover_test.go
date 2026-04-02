@@ -166,7 +166,7 @@ func TestRecoverMailboxDeletableRejectsSpecialUse(t *testing.T) {
 }
 
 func TestRenderRecoveryMbsyncConfigUsesPushAndIsolatedSyncState(t *testing.T) {
-	got := renderRecoveryMbsyncConfig("imap.fastmail.com", "993", "testing@mk1.me", "/tmp/staging", "/tmp/syncstate", recoveryMbsyncPatterns(defaultIgnoreMailboxRegex))
+	got := renderRecoveryMbsyncConfig("imap.fastmail.com", "993", "user@example.com", "/tmp/staging", "/tmp/syncstate", recoveryMbsyncPatterns(defaultIgnoreMailboxRegex))
 	for _, needle := range []string{
 		"Sync Push",
 		"Create Far",

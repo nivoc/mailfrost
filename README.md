@@ -2,7 +2,7 @@
 
 `mail-backup` is a standalone Go tool for Maildir-based mail backup and integrity auditing.
 
-It does four things in one run:
+In normal use it does four things in one run:
 
 - syncs mail with `mbsync`
 - scans the local Maildir into a manifest
@@ -20,35 +20,45 @@ Unlike `ical-backup`, this tool maintains a trusted baseline for old mail. If a 
 
 For stronger guarantees, keep the Kopia repository off-host and use storage-side immutability where possible.
 
-## Setup
-
-Run the interactive setup wizard:
-
-```bash
-go run ./cmd/mail-backup setup
-```
-
-The wizard will:
-
-1. prompt for IMAP host, username, password, and port
-2. generate the internal `mbsync` config file
-3. prompt for Kopia repository type and credentials
-4. optionally create or connect the Kopia repository
-5. write `.env`
-6. create local working directories
-
-You can rerun `setup` at any time to refresh values.
-
-## Usage
+## Quick Start
 
 Build the binary:
 
 ```bash
 make build
-./mail-backup
 ```
 
-Run a normal backup:
+Run the interactive setup wizard:
+
+```bash
+./mail-backup setup
+```
+
+Then run the normal backup flow:
+
+```bash
+./mail-backup backup
+```
+
+That is the intended setup path.
+
+`setup` will:
+
+1. verify that `mbsync` and `kopia` are installed
+2. prompt for IMAP host, username, password, and port
+3. generate the internal `mbsync` config file
+4. prompt for Kopia repository type and credentials
+5. optionally create or connect the Kopia repository
+6. set the Maildir compression policy in Kopia to `zstd`
+7. write `.env`
+8. create local working directories
+9. print a short Kopia repository summary
+
+You can rerun `setup` at any time to refresh values.
+
+## Common Commands
+
+Normal backup:
 
 ```bash
 ./mail-backup backup
@@ -60,33 +70,83 @@ Recover the managed IMAP mailboxes from a snapshot:
 ./mail-backup recover
 ```
 
+Resume a failed recovery push without clearing mailboxes again:
+
+```bash
+./mail-backup recover-resume
+```
+
+Restore a snapshot into a local directory:
+
+```bash
+./mail-backup restore
+```
+
 Accept the current Maildir as the new baseline:
 
 ```bash
 ./mail-backup rebaseline
 ```
 
-Restore a snapshot into a staging directory:
+Show the tool version:
 
 ```bash
-./mail-backup restore
+./mail-backup version
 ```
 
-Restore a specific snapshot:
+## How It Works
+
+The backup flow:
+
+- acquires a lock in `state_dir/.lock`
+- regenerates the `mbsync` config from `.env`
+- runs `mbsync`
+- builds the current Maildir manifest
+- compares it to `state_dir/manifests/baseline.json`
+- writes JSON and text reports under `state_dir/reports/`
+- snapshots the Maildir with `kopia`
+- snapshots the state directory too unless disabled
+- runs periodic `kopia maintenance`
+- prints a short Kopia repository summary
+- promotes the new baseline only after a clean backup with no integrity alert
+
+State stored under `state_dir`:
+
+- `logs/`
+- `manifests/baseline.json`
+- `manifests/latest.json`
+- `manifests/*.sha256`
+- `reports/*.json`
+- `reports/*.txt`
+- `alerts.log`
+
+## Exit Codes
+
+- `0`: success
+- `1`: config error, scan failure, command failure, or restore/setup failure
+- `2`: integrity alert
+
+## Alerting
+
+If `ALERT_COMMAND` is set, it runs with `bash -c` semantics and receives the alert body on stdin.
+
+These environment variables are provided:
+
+- `MAIL_BACKUP_STATUS`
+- `MAIL_BACKUP_ALERT_SUBJECT`
+- `MAIL_BACKUP_ALERT_BODY`
+
+Example mail alert:
 
 ```bash
-./mail-backup restore -snapshot <id>
-```
-
-Use custom config and/or env paths:
-
-```bash
-./mail-backup --config /path/to/config --env /path/to/.env backup
+ALERT_COMMAND='mail -s "$MAIL_BACKUP_ALERT_SUBJECT" you@example.com'
 ```
 
 ## Configuration
 
-The tool uses the same split configuration model as `ical-backup`:
+Most users do not need to edit config files manually. `setup` is the normal path.
+
+The tool uses this split configuration model:
 
 1. `.env` for secrets and Kopia repository settings
 2. `config.advanced` for tracked operational defaults
@@ -136,53 +196,6 @@ These files contain non-secret operational settings:
 - `KOPIA_SNAPSHOT_ARGS`
 - `ALERT_COMMAND`
 
-## How It Works
-
-The backup flow:
-
-- acquires a lock in `state_dir/.lock`
-- regenerates the `mbsync` config from `.env`
-- runs `mbsync`
-- builds the current Maildir manifest
-- compares it to `state_dir/manifests/baseline.json`
-- writes JSON and text reports under `state_dir/reports/`
-- snapshots the Maildir with `kopia`
-- snapshots the state directory too unless disabled
-- runs periodic `kopia maintenance`
-- promotes the new baseline only after a clean backup with no integrity alert
-
-State stored under `state_dir`:
-
-- `logs/`
-- `manifests/baseline.json`
-- `manifests/latest.json`
-- `manifests/*.sha256`
-- `reports/*.json`
-- `reports/*.txt`
-- `alerts.log`
-
-## Exit Codes
-
-- `0`: success
-- `1`: config error, scan failure, command failure, or restore/setup failure
-- `2`: integrity alert
-
-## Alerting
-
-If `ALERT_COMMAND` is set, it runs with `bash -c` semantics and receives the alert body on stdin.
-
-These environment variables are provided:
-
-- `MAIL_BACKUP_STATUS`
-- `MAIL_BACKUP_ALERT_SUBJECT`
-- `MAIL_BACKUP_ALERT_BODY`
-
-Example mail alert:
-
-```bash
-ALERT_COMMAND='mail -s "$MAIL_BACKUP_ALERT_SUBJECT" you@example.com'
-```
-
 ## Restore
 
 `restore` is a local filesystem restore from Kopia snapshots.
@@ -213,6 +226,8 @@ Examples:
 ```bash
 ./mail-backup recover -snapshot <id>
 ./mail-backup recover -snapshot <id> -yes -confirm-user user@example.com
+./mail-backup recover-resume
+./mail-backup recover-resume -run 20260401T141455Z
 ```
 
 Important behavior:
@@ -221,6 +236,7 @@ Important behavior:
 - in interactive mode you can decline the safety copy, but then newer mail in managed mailboxes has no automatic rescue path
 - this deletes mail from the managed IMAP mailboxes before re-uploading the snapshot
 - ignored folders such as `Trash`, `Junk`, `Spam`, and `Drafts` are left alone by default
+- if the recovery `mbsync` push times out, rerun `recover-resume` to continue that push without clearing mailboxes again
 - after a successful recovery, run `backup` and then `rebaseline` if the recovered state is now intentional truth
 
 ## Operational Notes

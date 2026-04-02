@@ -43,6 +43,10 @@ type s3ErrorResponse struct {
 func (a *SetupApp) Run() error {
 	a.stdin = bufio.NewReader(os.Stdin)
 
+	if err := ensureSetupToolsAvailable([]string{"mbsync", "kopia"}); err != nil {
+		return err
+	}
+
 	existing, err := LoadSetupConfig(a.EnvPath)
 	if err != nil {
 		return err
@@ -330,6 +334,9 @@ func (a *SetupApp) Run() error {
 
 	fmt.Println()
 	fmt.Println("Setup complete.")
+	if repoAction == "1" || repoAction == "2" {
+		fmt.Print(renderKopiaRepoStatus(buildKopiaRepoStatusFromSetup(values, stateDir, defaultKopiaMaintenanceInterval, "zstd")))
+	}
 	if objectLock.Enabled {
 		fmt.Println("Object Lock note: no extra manual step. Regular backup runs will trigger Kopia maintenance to extend locks before they expire.")
 	}
@@ -567,6 +574,19 @@ func defaultIfEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func ensureSetupToolsAvailable(commands []string) error {
+	var missing []string
+	for _, name := range commands {
+		if _, err := exec.LookPath(name); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("setup requires these commands in PATH: %s", strings.Join(missing, ", "))
 }
 
 func normalizeS3Prefix(value string) string {
