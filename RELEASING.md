@@ -38,11 +38,12 @@ Each zip contains the `mailfrost` binary.
 
 The version string inside the binary is set from the git tag, for example `v0.1.1`.
 
-After the release asset is uploaded, the workflow also updates [Formula/mailfrost.rb](/Users/matthias/worklist/mail-backup/Formula/mailfrost.rb) on `main` so the Homebrew tap points at the new macOS asset and checksum automatically.
+After the release asset is uploaded, the workflow also updates the dedicated Homebrew tap repo `nivoc/homebrew-mailfrost` so `brew upgrade mailfrost` points at the new macOS asset and checksum automatically.
 
 ## Notes
 
 - Use a new tag for every release.
+- Cross-repo Homebrew updates use the `HOMEBREW_TAP_TOKEN` repository secret in the main repo.
 - After the tag workflow finishes, `brew update && brew upgrade mailfrost` should pick up the new version automatically.
 - If a tag already exists locally, inspect it before reusing or moving it.
 - If `git push` fails with a DNS or network error, just retry when connectivity is back.

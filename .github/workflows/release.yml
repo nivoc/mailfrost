@@ -73,10 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          repository: nivoc/homebrew-mailfrost
           ref: main
-          fetch-depth: 0
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-      - name: Update Formula/mailfrost.rb
+      - name: Update Formula/mailfrost.rb in tap repo
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -96,19 +97,29 @@ jobs:
           fi
           asset_sha256="${asset_digest#sha256:}"
           version="${TAG_NAME#v}"
-          python3 - <<'PY' "${TAG_NAME}" "${version}" "${asset_url}" "${asset_sha256}"
-from pathlib import Path
-import re
-import sys
+          mkdir -p Formula
+          cat > Formula/mailfrost.rb <<EOF
+          class Mailfrost < Formula
+            desc "Maildir integrity tracking, confidence, and backup"
+            homepage "https://github.com/nivoc/mailfrost"
+            url "${asset_url}"
+            sha256 "${asset_sha256}"
+            version "${version}"
 
-tag_name, version, asset_url, asset_sha256 = sys.argv[1:]
-path = Path("Formula/mailfrost.rb")
-text = path.read_text()
-text = re.sub(r'^  url ".*"$', f'  url "{asset_url}"', text, flags=re.M)
-text = re.sub(r'^  sha256 ".*"$', f'  sha256 "{asset_sha256}"', text, flags=re.M)
-text = re.sub(r'^  version ".*"$', f'  version "{version}"', text, flags=re.M)
-path.write_text(text)
-PY
+            depends_on arch: :arm64
+
+            def install
+              odie "Mailfrost is currently packaged only for macOS Apple Silicon." unless OS.mac? && Hardware::CPU.arm?
+
+              bin.install "mailfrost"
+              prefix.install "README.txt"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/mailfrost version")
+            end
+          end
+          EOF
 
       - name: Commit formula update
         run: |
