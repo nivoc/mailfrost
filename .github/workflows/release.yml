@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    name: Build ${{ matrix.asset_name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -20,15 +20,15 @@ jobs:
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
+            asset_name: linux_x86_64
           - runner: ubuntu-latest
             goos: linux
             goarch: arm64
-          - runner: macos-latest
-            goos: darwin
-            goarch: amd64
+            asset_name: linux_arm64
           - runner: macos-latest
             goos: darwin
             goarch: arm64
+            asset_name: macos_apple_silicon
 
     steps:
       - uses: actions/checkout@v5
@@ -46,16 +46,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ github.ref_name }}
           APP_NAME: mailfrost
+          ASSET_NAME: ${{ matrix.asset_name }}
         run: |
           set -eu
           mkdir -p dist
-          out_dir="${APP_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+          out_dir="${APP_NAME}_${VERSION}_${ASSET_NAME}"
           bin_name="${APP_NAME}"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${out_dir}/${bin_name}" ./cmd/mailfrost
-          tar -czf "dist/${out_dir}.tar.gz" "${out_dir}"
+          (cd "${out_dir}" && zip -q "../dist/${out_dir}.zip" "${bin_name}")
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/*.tar.gz
+          files: dist/*.zip

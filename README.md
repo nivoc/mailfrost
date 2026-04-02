@@ -4,6 +4,13 @@ Note: this is still a personal tool. Use it at your own risk. It has only been t
 
 Download releases: https://github.com/nivoc/mailfrost/releases
 
+Release binaries are published as `.zip` files. Unzip the archive and make the binary executable before first use:
+
+```bash
+unzip mailfrost_...zip
+chmod +x mailfrost
+```
+
 `Mailfrost` is a standalone Go tool for Maildir integrity tracking, confidence, and backup.
 
 In normal use it does four things in one run:
