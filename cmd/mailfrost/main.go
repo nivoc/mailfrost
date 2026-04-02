@@ -116,10 +116,10 @@ func versionString() string {
 }
 
 func printVersionBanner() {
-	line := colorVersion() + versionString() + colorReset
 	result := checkLatestRelease()
+	lineColor := colorVersion()
 	if result.updateAvailable {
-		fmt.Println(line)
+		fmt.Println(lineColor + versionString() + colorReset)
 		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, result.info.TagName, version)
 		fmt.Printf("%sUpgrade:%s brew update && brew upgrade mailfrost\n", colorWarning(), colorReset)
 		if result.info.HTMLURL != "" {
@@ -128,9 +128,11 @@ func printVersionBanner() {
 		return
 	}
 	if result.checked {
-		line += " " + colorSuccess() + "[latest]" + colorReset
+		lineColor = colorSuccess()
+		fmt.Println(lineColor + versionString() + " [latest]" + colorReset)
+		return
 	}
-	fmt.Println(line)
+	fmt.Println(lineColor + versionString() + colorReset)
 }
 
 func checkLatestRelease() releaseCheckResult {
