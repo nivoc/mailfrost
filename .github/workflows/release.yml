@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - runner: macos-latest
+            goos: darwin
+            goarch: amd64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+          APP_NAME: mailfrost
+        run: |
+          set -eu
+          mkdir -p dist
+          out_dir="${APP_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+          bin_name="${APP_NAME}"
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${out_dir}/${bin_name}" ./cmd/mailfrost
+          tar -czf "dist/${out_dir}.tar.gz" "${out_dir}"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/*.tar.gz
