@@ -207,6 +207,19 @@ func TestBuildKopiaCompressionPolicyCommandUsesZstd(t *testing.T) {
 	}
 }
 
+func TestBuildKopiaChangePasswordCommand(t *testing.T) {
+	app := &SetupApp{}
+	got := app.buildKopiaChangePasswordCommand("/tmp/repository.config")
+	want := []string{
+		"kopia", "repository", "change-password",
+		"--config-file", "/tmp/repository.config",
+		"--no-progress",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("buildKopiaChangePasswordCommand() = %v, want %v", got, want)
+	}
+}
+
 func TestBuildKopiaSnapshotCreateCommandUsesSinglePurposeTagAndAccountTag(t *testing.T) {
 	app := &App{
 		Config: Config{

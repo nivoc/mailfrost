@@ -121,6 +121,12 @@ Restore a snapshot into a local directory:
 mailfrost restore
 ```
 
+Generate a new Kopia repository password and update `.env`:
+
+```bash
+mailfrost renew-kopia-password
+```
+
 Accept the current Maildir as the new baseline:
 
 ```bash

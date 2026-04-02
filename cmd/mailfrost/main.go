@@ -47,13 +47,15 @@ func runMain() int {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "%sUsage:%s mailfrost [flags] [command]\n\n", colorHeader(), colorReset)
 		fmt.Fprintf(os.Stderr, "%sCommands:%s\n", colorHeader(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %sbackup%s          Sync mail, audit stable messages, and create a kopia backup\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %srecover%s         Restore a snapshot and rewrite the managed IMAP mailboxes to match it\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %srecover-resume%s  Retry the last recovery mbsync push without clearing mailboxes again\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %srebaseline%s      Accept the current Maildir state as the new known-good baseline\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %srestore%s         Restore a Maildir snapshot from kopia\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %ssetup%s           Interactive setup wizard for mbsync and kopia\n", colorCommand(), colorReset)
-		fmt.Fprintf(os.Stderr, "  %sversion%s         Show the Mailfrost version\n\n", colorCommand(), colorReset)
+		printCommandHelp("backup", "Sync mail, audit stable messages, and create a kopia backup")
+		printCommandHelp("renew-kopia-password", "Generate a new Kopia repository password and update .env")
+		printCommandHelp("recover", "Restore a snapshot and rewrite the managed IMAP mailboxes to match it")
+		printCommandHelp("recover-resume", "Retry the last recovery mbsync push without clearing mailboxes again")
+		printCommandHelp("rebaseline", "Accept the current Maildir state as the new known-good baseline")
+		printCommandHelp("restore", "Restore a Maildir snapshot from kopia")
+		printCommandHelp("setup", "Interactive setup wizard for mbsync and kopia")
+		printCommandHelp("version", "Show the Mailfrost version")
+		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%sFlags:%s\n", colorHeader(), colorReset)
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\n%sRestore flags%s (use after %srestore%s):\n", colorHeader(), colorReset, colorCommand(), colorReset)
@@ -94,6 +96,8 @@ func runMain() int {
 		return 0
 	case "backup":
 		return runBackup(*configPath, *envPath)
+	case "renew-kopia-password", "change-password":
+		return runChangePassword(*envPath)
 	case "recover":
 		return runRecover(*configPath, *envPath, flag.Args()[1:])
 	case "recover-resume":
@@ -106,7 +110,7 @@ func runMain() int {
 		return runSetup(*envPath)
 	default:
 		fmt.Fprintf(os.Stderr, "%sUnknown command:%s %s\n", colorWarning(), colorReset, subcommand)
-		fmt.Fprintf(os.Stderr, "Usage: mailfrost [backup|recover|recover-resume|rebaseline|restore|setup|version]\n")
+		fmt.Fprintf(os.Stderr, "Usage: mailfrost [backup|renew-kopia-password|recover|recover-resume|rebaseline|restore|setup|version]\n")
 		return 1
 	}
 }
@@ -249,6 +253,10 @@ func colorSuccess() string {
 	return colorBold + colorGreen
 }
 
+func printCommandHelp(command, description string) {
+	fmt.Fprintf(os.Stderr, "  %s%-20s%s  %s\n", colorCommand(), command, colorReset, description)
+}
+
 func runBackup(configPath, envPath string) int {
 	config, err := internal.LoadConfig(configPath, envPath)
 	if err != nil {
@@ -297,6 +305,15 @@ func runRebaseline(configPath, envPath string) int {
 func runSetup(envPath string) int {
 	app := &internal.SetupApp{EnvPath: envPath}
 	if err := app.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runChangePassword(envPath string) int {
+	app := &internal.SetupApp{EnvPath: envPath}
+	if err := app.RunChangePassword(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}

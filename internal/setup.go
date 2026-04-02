@@ -41,7 +41,7 @@ type s3ErrorResponse struct {
 }
 
 func (a *SetupApp) Run() error {
-	a.stdin = bufio.NewReader(os.Stdin)
+	a.ensureStdin()
 
 	if err := ensureSetupToolsAvailable([]string{"mbsync", "kopia"}); err != nil {
 		return err
@@ -345,6 +345,74 @@ func (a *SetupApp) Run() error {
 	return nil
 }
 
+func (a *SetupApp) RunChangePassword() error {
+	a.ensureStdin()
+
+	if err := ensureSetupToolsAvailable([]string{"kopia"}); err != nil {
+		return err
+	}
+
+	existing, err := LoadSetupConfig(a.EnvPath)
+	if err != nil {
+		return err
+	}
+
+	configPath := strings.TrimSpace(existing["KOPIA_CONFIG_PATH"])
+	if configPath == "" {
+		return fmt.Errorf("change-password requires KOPIA_CONFIG_PATH in .env")
+	}
+
+	currentPassword, err := a.prompt("Current Kopia repository password", "", true)
+	if err != nil {
+		return err
+	}
+	currentPassword = strings.TrimSpace(currentPassword)
+	if currentPassword == "" {
+		return fmt.Errorf("change-password requires the current Kopia repository password")
+	}
+
+	generate, err := a.promptYesNo("Generate a new Kopia repository password", true)
+	if err != nil {
+		return err
+	}
+	if !generate {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	newPassword, err := generateKopiaPassword()
+	if err != nil {
+		return err
+	}
+
+	command := a.buildKopiaChangePasswordCommand(configPath)
+	env := buildEnv(map[string]string{
+		"KOPIA_PASSWORD":     currentPassword,
+		"KOPIA_NEW_PASSWORD": newPassword,
+	})
+	output, cmdErr := runCommandWithEnv(command, env)
+	if cmdErr != nil {
+		if strings.TrimSpace(output) != "" {
+			fmt.Printf("Kopia output:\n%s\n", output)
+		}
+		return fmt.Errorf("kopia repository password change failed: %w", cmdErr)
+	}
+
+	existing["KOPIA_PASSWORD"] = newPassword
+	envPath, err := filepath.Abs(a.EnvPath)
+	if err != nil {
+		return err
+	}
+	if err := writeEnvFile(envPath, existing); err != nil {
+		return err
+	}
+
+	fmt.Println("Kopia repository password changed.")
+	fmt.Printf("Wrote %s\n", a.EnvPath)
+	fmt.Println(renderGeneratedKopiaPasswordNotice(newPassword))
+	return nil
+}
+
 func renderMbsyncConfig(host, port, username, maildirPath string) string {
 	return strings.Join([]string{
 		"IMAPAccount remote",
@@ -436,6 +504,14 @@ func (a *SetupApp) buildKopiaCompressionPolicyCommand(configPath, targetPath str
 	}
 }
 
+func (a *SetupApp) buildKopiaChangePasswordCommand(configPath string) []string {
+	return []string{
+		"kopia", "repository", "change-password",
+		"--config-file", configPath,
+		"--no-progress",
+	}
+}
+
 func (a *SetupApp) prompt(label, defaultValue string, mask bool) (string, error) {
 	if defaultValue != "" {
 		display := defaultValue
@@ -489,11 +565,10 @@ func (a *SetupApp) resolveKopiaPassword(existingPassword, repoAction string) (st
 			}
 			return password, nil
 		}
-		passwordBytes := make([]byte, 32)
-		if _, err := rand.Read(passwordBytes); err != nil {
-			return "", fmt.Errorf("generate password: %w", err)
+		password, err := generateKopiaPassword()
+		if err != nil {
+			return "", err
 		}
-		password := base64.StdEncoding.EncodeToString(passwordBytes)
 		fmt.Println(renderGeneratedKopiaPasswordNotice(password))
 		return password, nil
 	case "2":
@@ -524,6 +599,20 @@ func (a *SetupApp) resolveKopiaPassword(existingPassword, repoAction string) (st
 		}
 		return "", fmt.Errorf("invalid repository action: %s", repoAction)
 	}
+}
+
+func (a *SetupApp) ensureStdin() {
+	if a.stdin == nil {
+		a.stdin = bufio.NewReader(os.Stdin)
+	}
+}
+
+func generateKopiaPassword() (string, error) {
+	passwordBytes := make([]byte, 32)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return "", fmt.Errorf("generate password: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(passwordBytes), nil
 }
 
 func (a *SetupApp) promptYesNo(label string, defaultValue bool) (bool, error) {
