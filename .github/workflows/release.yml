@@ -58,11 +58,18 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "${out_dir}/${bin_name}" ./cmd/mailfrost
           (cd "${out_dir}" && zip -q "../dist/${out_dir}.zip" "${bin_name}" README.txt)
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: dist/*.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" dist/*.zip --clobber
+          else
+            gh release create "${TAG_NAME}" dist/*.zip --verify-tag --title "${TAG_NAME}"
+          fi
 
   update_formula:
     name: Update Homebrew formula
