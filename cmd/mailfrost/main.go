@@ -20,6 +20,8 @@ const (
 	colorBold   = "\033[1m"
 	colorCyan   = "\033[36m"
 	colorYellow = "\033[33m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
 )
 
 type releaseInfo struct {
@@ -119,13 +121,14 @@ func printVersionBanner() {
 	if result.updateAvailable {
 		fmt.Println(line)
 		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, result.info.TagName, version)
+		fmt.Printf("%sUpgrade:%s brew update && brew upgrade mailfrost\n", colorWarning(), colorReset)
 		if result.info.HTMLURL != "" {
-			fmt.Printf("%sDownload:%s %s\n", colorWarning(), colorReset, result.info.HTMLURL)
+			fmt.Printf("%sRelease:%s %s\n", colorWarning(), colorReset, result.info.HTMLURL)
 		}
 		return
 	}
 	if result.checked {
-		line += " " + colorHeader() + "[latest]" + colorReset
+		line += " " + colorSuccess() + "[latest]" + colorReset
 	}
 	fmt.Println(line)
 }
@@ -233,11 +236,15 @@ func colorCommand() string {
 }
 
 func colorWarning() string {
-	return colorBold + colorYellow
+	return colorBold + colorRed
 }
 
 func colorVersion() string {
 	return colorBold + colorYellow
+}
+
+func colorSuccess() string {
+	return colorBold + colorGreen
 }
 
 func runBackup(configPath, envPath string) int {
