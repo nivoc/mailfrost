@@ -27,6 +27,12 @@ type releaseInfo struct {
 	HTMLURL string `json:"html_url"`
 }
 
+type releaseCheckResult struct {
+	info            releaseInfo
+	checked         bool
+	updateAvailable bool
+}
+
 func main() {
 	os.Exit(runMain())
 }
@@ -108,23 +114,30 @@ func versionString() string {
 }
 
 func printVersionBanner() {
-	fmt.Println(colorVersion() + versionString() + colorReset)
-	if info, ok := checkLatestRelease(); ok {
-		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, info.TagName, version)
-		if info.HTMLURL != "" {
-			fmt.Printf("%sDownload:%s %s\n", colorWarning(), colorReset, info.HTMLURL)
+	line := colorVersion() + versionString() + colorReset
+	result := checkLatestRelease()
+	if result.updateAvailable {
+		fmt.Println(line)
+		fmt.Printf("%sUpdate available:%s %s (current: %s)\n", colorWarning(), colorReset, result.info.TagName, version)
+		if result.info.HTMLURL != "" {
+			fmt.Printf("%sDownload:%s %s\n", colorWarning(), colorReset, result.info.HTMLURL)
 		}
+		return
 	}
+	if result.checked {
+		line += " " + colorHeader() + "[latest]" + colorReset
+	}
+	fmt.Println(line)
 }
 
-func checkLatestRelease() (releaseInfo, bool) {
+func checkLatestRelease() releaseCheckResult {
 	if strings.TrimSpace(version) == "" || version == "dev" {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
 
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/nivoc/mailfrost/releases/latest", nil)
 	if err != nil {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "mailfrost/"+version)
@@ -132,26 +145,30 @@ func checkLatestRelease() (releaseInfo, bool) {
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	resp, err := client.Do(req)
 	if err != nil {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
 
 	var info releaseInfo
 	if err := json.Unmarshal(body, &info); err != nil {
-		return releaseInfo{}, false
+		return releaseCheckResult{}
 	}
-	if info.TagName == "" || !isVersionNewer(info.TagName, version) {
-		return releaseInfo{}, false
+	if info.TagName == "" {
+		return releaseCheckResult{}
 	}
-	return info, true
+	return releaseCheckResult{
+		info:            info,
+		checked:         true,
+		updateAvailable: isVersionNewer(info.TagName, version),
+	}
 }
 
 func isVersionNewer(latest, current string) bool {
