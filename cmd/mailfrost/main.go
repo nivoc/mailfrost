@@ -53,6 +53,7 @@ func runMain() int {
 		printCommandHelp("recover-resume", "Retry the last recovery mbsync push without clearing mailboxes again")
 		printCommandHelp("rebaseline", "Accept the current Maildir state as the new known-good baseline")
 		printCommandHelp("restore", "Restore a Maildir snapshot from kopia")
+		printCommandHelp("status", "Show last run status for known Mailfrost instances")
 		printCommandHelp("setup", "Interactive setup wizard for mbsync and kopia")
 		printCommandHelp("version", "Show the Mailfrost version")
 		fmt.Fprintln(os.Stderr)
@@ -86,9 +87,11 @@ func runMain() int {
 		return runRestore(*configPath, *envPath, flag.Args()[1:])
 	case "setup":
 		return runSetup(*envPath)
+	case "status":
+		return runStatus(*configPath, *envPath)
 	default:
 		fmt.Fprintf(os.Stderr, "%sUnknown command:%s %s\n", colorWarning(), colorReset, subcommand)
-		fmt.Fprintf(os.Stderr, "Usage: mailfrost [backup|renew-kopia-password|recover|recover-resume|rebaseline|restore|setup|version]\n")
+		fmt.Fprintf(os.Stderr, "Usage: mailfrost [backup|renew-kopia-password|recover|recover-resume|rebaseline|restore|setup|status|version]\n")
 		return 1
 	}
 }
@@ -242,7 +245,7 @@ func runBackup(configPath, envPath string) int {
 		return 1
 	}
 
-	runtime, err := internal.StartRuntime(config)
+	runtime, err := internal.StartRuntime(config, "backup")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
@@ -253,7 +256,13 @@ func runBackup(configPath, envPath string) int {
 	exitCode, err := app.RunBackup()
 	if err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)
+		runtime.MarkCompleted("error", 1, err)
 		return 1
+	}
+	if exitCode == internal.AlertExitCode {
+		runtime.MarkCompleted("alert", exitCode, nil)
+	} else {
+		runtime.MarkCompleted("ok", exitCode, nil)
 	}
 	return exitCode
 }
@@ -265,7 +274,7 @@ func runRebaseline(configPath, envPath string) int {
 		return 1
 	}
 
-	runtime, err := internal.StartRuntime(config)
+	runtime, err := internal.StartRuntime(config, "rebaseline")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
@@ -275,8 +284,10 @@ func runRebaseline(configPath, envPath string) int {
 	app := &internal.App{Config: config, Runtime: runtime}
 	if err := app.RunRebaseline(); err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)
+		runtime.MarkCompleted("error", 1, err)
 		return 1
 	}
+	runtime.MarkCompleted("ok", 0, nil)
 	return 0
 }
 
@@ -286,6 +297,16 @@ func runSetup(envPath string) int {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func runStatus(configPath, envPath string) int {
+	views, err := internal.CollectStatusViews(configPath, envPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
+	fmt.Print(internal.RenderStatusViews(views))
 	return 0
 }
 
@@ -313,7 +334,7 @@ func runRestore(configPath, envPath string, args []string) int {
 		return 1
 	}
 
-	runtime, err := internal.StartRuntime(config)
+	runtime, err := internal.StartRuntime(config, "restore")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
@@ -329,8 +350,10 @@ func runRestore(configPath, envPath string, args []string) int {
 	}
 	if err := app.Run(); err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)
+		runtime.MarkCompleted("error", 1, err)
 		return 1
 	}
+	runtime.MarkCompleted("ok", 0, nil)
 	return 0
 }
 
@@ -349,7 +372,7 @@ func runRecover(configPath, envPath string, args []string) int {
 		return 1
 	}
 
-	runtime, err := internal.StartRuntime(config)
+	runtime, err := internal.StartRuntime(config, "recover")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
@@ -365,8 +388,10 @@ func runRecover(configPath, envPath string, args []string) int {
 	}
 	if err := app.Run(); err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)
+		runtime.MarkCompleted("error", 1, err)
 		return 1
 	}
+	runtime.MarkCompleted("ok", 0, nil)
 	return 0
 }
 
@@ -383,7 +408,7 @@ func runRecoverResume(configPath, envPath string, args []string) int {
 		return 1
 	}
 
-	runtime, err := internal.StartRuntime(config)
+	runtime, err := internal.StartRuntime(config, "recover-resume")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return 1
@@ -397,7 +422,9 @@ func runRecoverResume(configPath, envPath string, args []string) int {
 	}
 	if err := app.Run(); err != nil {
 		internal.NotifyRuntimeFailure(runtime, err)
+		runtime.MarkCompleted("error", 1, err)
 		return 1
 	}
+	runtime.MarkCompleted("ok", 0, nil)
 	return 0
 }

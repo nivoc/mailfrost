@@ -139,6 +139,12 @@ Show the tool version:
 mailfrost version
 ```
 
+Show the latest known run state:
+
+```bash
+mailfrost status
+```
+
 ## Scheduling on macOS
 
 For unattended runs on macOS, use a user `launchd` agent.
@@ -167,6 +173,7 @@ Notes:
 - `StartInterval` is in seconds, so `7200` means every 2 hours
 - Mailfrost already takes a lock in `state_dir/.lock`, so overlapping scheduled runs will fail safely
 - review `data/state/logs/` and `alerts.log` as part of normal monitoring
+- `mailfrost status` works from any directory after an instance has been registered by `setup` or a normal run
 
 ## How It Works
 
@@ -192,7 +199,13 @@ State stored under `state_dir`:
 - `manifests/*.sha256`
 - `reports/*.json`
 - `reports/*.txt`
+- `status.json`
 - `alerts.log`
+
+Global instance registry:
+
+- `$XDG_CONFIG_HOME/mailfrost/registry.json`
+- `~/.config/mailfrost/registry.json` when `XDG_CONFIG_HOME` is not set
 
 ## Exit Codes
 

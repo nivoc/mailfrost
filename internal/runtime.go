@@ -21,6 +21,7 @@ type StatePaths struct {
 	LogDir                string
 	ManifestDir           string
 	ReportDir             string
+	StatusFile            string
 	AlertLog              string
 	KopiaMaintenanceStamp string
 	LockFile              string
@@ -32,6 +33,7 @@ func StatePathsFromDir(stateDir string) StatePaths {
 		LogDir:                filepath.Join(stateDir, "logs"),
 		ManifestDir:           filepath.Join(stateDir, "manifests"),
 		ReportDir:             filepath.Join(stateDir, "reports"),
+		StatusFile:            filepath.Join(stateDir, "status.json"),
 		AlertLog:              filepath.Join(stateDir, "alerts.log"),
 		KopiaMaintenanceStamp: filepath.Join(stateDir, "kopia-maintenance.last_ok"),
 		LockFile:              filepath.Join(stateDir, ".lock"),
@@ -48,15 +50,17 @@ func (p StatePaths) Create() error {
 }
 
 type Runtime struct {
-	Config     Config
-	Paths      StatePaths
-	RunID      string
-	RunLogPath string
-	runLog     *os.File
-	lockFile   *os.File
+	Config      Config
+	Paths       StatePaths
+	RunID       string
+	CommandName string
+	RunLogPath  string
+	runLog      *os.File
+	lockFile    *os.File
+	finalized   bool
 }
 
-func StartRuntime(config Config) (*Runtime, error) {
+func StartRuntime(config Config, commandName string) (*Runtime, error) {
 	paths := StatePathsFromDir(config.StateDir)
 	if err := paths.Create(); err != nil {
 		return nil, fmt.Errorf("create state directories: %w", err)
@@ -94,12 +98,13 @@ func StartRuntime(config Config) (*Runtime, error) {
 	}
 
 	runtime := &Runtime{
-		Config:     config,
-		Paths:      paths,
-		RunID:      runID,
-		RunLogPath: runLogPath,
-		runLog:     runLog,
-		lockFile:   lockFile,
+		Config:      config,
+		Paths:       paths,
+		RunID:       runID,
+		CommandName: commandName,
+		RunLogPath:  runLogPath,
+		runLog:      runLog,
+		lockFile:    lockFile,
 	}
 	runtime.LogFile("INFO", fmt.Sprintf("Run id: %s", runtime.RunID))
 	if runtime.Config.AdvancedConfigFileLoaded {
@@ -112,6 +117,12 @@ func StartRuntime(config Config) (*Runtime, error) {
 	}
 	runtime.LogFile("INFO", fmt.Sprintf("Env file: %s", runtime.Config.EnvPath))
 	runtime.LogFile("INFO", fmt.Sprintf("State dir: %s", runtime.Config.StateDir))
+	if err := RegisterInstance(config); err != nil {
+		runtime.LogFile("WARN", fmt.Sprintf("Register instance failed: %s", err))
+	}
+	if err := runtime.writeRunningStatus(); err != nil {
+		runtime.LogFile("WARN", fmt.Sprintf("Write status file failed: %s", err))
+	}
 	return runtime, nil
 }
 
@@ -499,7 +510,7 @@ func (f *kopiaSnapshotConsoleFilter) finishProgress(runtime *Runtime) {
 }
 
 var (
-	ansiEscapePattern   = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+	ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 )
 
 func stripANSI(value string) string {
@@ -595,6 +606,63 @@ func NotifyRuntimeFailure(runtime *Runtime, err error) {
 		fmt.Sprintf("Run log: %s", runtime.RunLogPath),
 	}, "\n")
 	runtime.SendAlert("ERROR", "Mail backup run failed", body)
+}
+
+func (r *Runtime) MarkCompleted(status string, exitCode int, runErr error) {
+	if r == nil || r.finalized {
+		return
+	}
+	if err := r.writeCompletedStatus(status, exitCode, runErr); err != nil {
+		r.LogFile("WARN", fmt.Sprintf("Write status file failed: %s", err))
+	}
+	r.finalized = true
+}
+
+func (r *Runtime) writeRunningStatus() error {
+	snapshot, err := loadInstanceStatus(r.Paths.StatusFile)
+	if err != nil {
+		return err
+	}
+	snapshot.UpdatedAt = utcNow().Format(time.RFC3339)
+	snapshot.Current = &RunStatus{
+		RunID:     r.RunID,
+		Command:   r.CommandName,
+		Status:    "running",
+		PID:       os.Getpid(),
+		StartedAt: utcNow().Format(time.RFC3339),
+		LogPath:   r.RunLogPath,
+	}
+	return saveInstanceStatus(r.Paths.StatusFile, snapshot)
+}
+
+func (r *Runtime) writeCompletedStatus(status string, exitCode int, runErr error) error {
+	snapshot, err := loadInstanceStatus(r.Paths.StatusFile)
+	if err != nil {
+		return err
+	}
+	startedAt := utcNow().Format(time.RFC3339)
+	if snapshot.Current != nil && snapshot.Current.RunID == r.RunID && strings.TrimSpace(snapshot.Current.StartedAt) != "" {
+		startedAt = snapshot.Current.StartedAt
+	}
+
+	runStatus := RunStatus{
+		RunID:      r.RunID,
+		Command:    r.CommandName,
+		Status:     strings.TrimSpace(status),
+		PID:        os.Getpid(),
+		StartedAt:  startedAt,
+		FinishedAt: utcNow().Format(time.RFC3339),
+		ExitCode:   exitCode,
+		LogPath:    r.RunLogPath,
+	}
+	if runErr != nil {
+		runStatus.Error = runErr.Error()
+	}
+
+	snapshot.UpdatedAt = utcNow().Format(time.RFC3339)
+	snapshot.Current = nil
+	snapshot.Last = &runStatus
+	return saveInstanceStatus(r.Paths.StatusFile, snapshot)
 }
 
 func timestampLocal() string {

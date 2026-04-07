@@ -333,6 +333,10 @@ func (a *SetupApp) Run() error {
 		}
 	}
 
+	if err := RegisterInstancePaths("config", envPath, stateDir, maildirPath, imapUser); err != nil {
+		fmt.Printf("Warning: could not register this Mailfrost instance for global status lookup: %v\n", err)
+	}
+
 	fmt.Println()
 	fmt.Println("Setup complete.")
 	if repoAction == "1" || repoAction == "2" {
